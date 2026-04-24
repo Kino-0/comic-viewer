@@ -18,7 +18,11 @@
       }
     ],
     "security": {
-      "csp": null
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["/media/kino_10/HDD2/**"]
+      },
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost https://asset.localhost data: blob:;"
     }
   },
   "bundle": {

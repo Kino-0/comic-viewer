@@ -1,156 +1,186 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
+    import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 
-  let name = $state("");
-  let greetMsg = $state("");
+    // 検索用の状態
+    let query = $state("");
+    let searchResults = $state<string[]>([]);
 
-  async function greet(event: Event) {
-    event.preventDefault();
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    greetMsg = await invoke("greet", { name });
-  }
+    // ビューアの状態
+    let imagePaths = $state<string[]>([]);
+    let currentIndex = $state(0);
+    const currentImage = $derived(
+        imagePaths.length > 0 ? convertFileSrc(imagePaths[currentIndex]) : null,
+    );
+
+    // plocate で検索
+    async function searchWithPlocate() {
+        // 空文字の場合は検索せずに結果をクリア
+        if (!query || !query.trim()) {
+            searchResults = [];
+            return;
+        }
+
+        try {
+            searchResults = await invoke("search_with_plocate", {
+                query,
+                dbPath: "/var/lib/plocate/HDD2.db",
+            });
+        } catch (error) {
+            console.error("Search failed:", error);
+        }
+    }
+
+    async function loadDirectoryImages(dirPath: string) {
+        try {
+            const files = await invoke<string[]>("get_images_in_dir", {
+                path: dirPath,
+            });
+
+            if (files.length > 0) {
+                imagePaths = files.sort();
+                currentIndex = 0;
+            } else {
+                console.warn("このディレクトリには画像がありません");
+            }
+        } catch (error) {
+            console.error("画像の読み込みに失敗しました:", error);
+        }
+    }
+
+    // ビューア起動中のキー操作
+    function handleKeydown(event: KeyboardEvent) {
+        if (imagePaths.length === 0) return;
+        switch (event.key) {
+            case "ArrowRight":
+                currentIndex = Math.min(
+                    currentIndex + 1,
+                    imagePaths.length - 1,
+                );
+                break;
+            case "ArrowLeft":
+                currentIndex = Math.max(currentIndex - 1, 0);
+                break;
+            case "Escape":
+                imagePaths = [];
+                break;
+        }
+    }
 </script>
 
+<svelte:window onkeydown={handleKeydown} />
+
 <main class="container">
-  <h1>Welcome to Tauri + Svelte</h1>
+    {#if imagePaths.length === 0}
+        <div class="search-screen">
+            <h1>Comic Search</h1>
+            <div class="search-box">
+                <input
+                    type="text"
+                    bind:value={query}
+                    placeholder="ディレクトリ検索..."
+                    onkeydown={(e) => {
+                        e.key === "Enter" && searchWithPlocate();
+                    }}
+                />
+                <button onclick={searchWithPlocate}>🔍</button>
+            </div>
 
-  <div class="row">
-    <a href="https://vitejs.dev" target="_blank">
-      <img src="/vite.svg" class="logo vite" alt="Vite Logo" />
-    </a>
-    <a href="https://tauri.app" target="_blank">
-      <img src="/tauri.svg" class="logo tauri" alt="Tauri Logo" />
-    </a>
-    <a href="https://kit.svelte.dev" target="_blank">
-      <img src="/svelte.svg" class="logo svelte-kit" alt="SvelteKit Logo" />
-    </a>
-  </div>
-  <p>Click on the Tauri, Vite, and SvelteKit logos to learn more.</p>
-
-  <form class="row" onsubmit={greet}>
-    <input id="greet-input" placeholder="Enter a name..." bind:value={name} />
-    <button type="submit">Greet</button>
-  </form>
-  <p>{greetMsg}</p>
+            <ul class="results">
+                {#each searchResults as path}
+                    <li>
+                        <button
+                            type="button"
+                            onclick={() => loadDirectoryImages(path)}
+                            >{path}</button
+                        >
+                    </li>
+                {/each}
+            </ul>
+        </div>
+    {:else}
+        <div class="viewer" role="button" tabindex="0">
+            <img src={currentImage} alt="Comic page" />
+            <div class="info">Press Esc to return to search</div>
+        </div>
+    {/if}
 </main>
 
 <style>
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
-}
-
-.logo.svelte-kit:hover {
-  filter: drop-shadow(0 0 2em #ff3e00);
-}
-
-:root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
-  font-weight: 400;
-
-  color: #0f0f0f;
-  background-color: #f6f6f6;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
-}
-
-.container {
-  margin: 0;
-  padding-top: 10vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  text-align: center;
-}
-
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
-}
-
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
-}
-
-.row {
-  display: flex;
-  justify-content: center;
-}
-
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-
-a:hover {
-  color: #535bf2;
-}
-
-h1 {
-  text-align: center;
-}
-
-input,
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
-  transition: border-color 0.25s;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-}
-
-button {
-  cursor: pointer;
-}
-
-button:hover {
-  border-color: #396cd8;
-}
-button:active {
-  border-color: #396cd8;
-  background-color: #e8e8e8;
-}
-
-input,
-button {
-  outline: none;
-}
-
-#greet-input {
-  margin-right: 5px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
-  }
-
-  a:hover {
-    color: #24c8db;
-  }
-
-  input,
-  button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
-  }
-  button:active {
-    background-color: #0f0f0f69;
-  }
-}
-
+    :global(body) {
+        margin: 0;
+    }
+    .search-screen {
+        padding: 2rem;
+        max-width: 800px;
+        margin: 0 auto;
+    }
+    .search-box {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+    }
+    .search-box input {
+        flex-grow: 1;
+        padding: 1rem;
+        font-size: 1.2rem;
+        background: #2f2f2f;
+        color: white;
+        border: 1px solid #444;
+        border-radius: 8px;
+    }
+    .search-box button {
+        padding: 1rem 2rem;
+        font-size: 1.2rem;
+        background: #396cd8;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: background 0.2s;
+    }
+    .search-box button:hover {
+        background: #2a51a9;
+    }
+    .results {
+        list-style: none;
+        padding: 0;
+        margin-top: 1rem;
+        max-height: 70vh;
+        overflow-y: auto;
+        text-align: left;
+    }
+    .results button {
+        width: 100%;
+        text-align: left;
+        padding: 0.5rem;
+        background: none;
+        border: none;
+        border-bottom: 1px solid #333;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        cursor: pointer;
+    }
+    .results button:hover {
+        background: #396cd8;
+        color: white;
+    }
+    .viewer {
+        width: 100vw;
+        height: 100vh;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        background: black;
+    }
+    img {
+        max-height: 100%;
+        max-width: 100%;
+    }
+    .info {
+        position: absolute;
+        top: 10px;
+        color: #555;
+        font-size: 0.8rem;
+    }
 </style>
