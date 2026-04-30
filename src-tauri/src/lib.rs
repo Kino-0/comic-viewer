@@ -1,31 +1,32 @@
+mod db;
 use std::fs;
-use std::path::Path;
-use std::process::Command;
+use tauri::Manager;
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
-#[tauri::command]
-async fn search_with_plocate(query: &str, db_path: &str) -> Result<Vec<String>, String> {
-    if query.is_empty() {
-        return Ok(vec![]);
-    }
+// #[tauri::command]
+// async fn search_with_plocate(query: &str, db_path: &str) -> Result<Vec<String>, String> {
+//     if query.is_empty() {
+//         return Ok(vec![]);
+//     }
 
-    let output = Command::new("plocate")
-        .arg("-d")
-        .arg(db_path)
-        .arg("-i")
-        .arg(query)
-        .output()
-        .map_err(|e| e.to_string())?;
+//     let output = Command::new("plocate")
+//         .arg("-d")
+//         .arg(db_path)
+//         .arg("-i")
+//         .arg(query)
+//         .output()
+//         .map_err(|e| e.to_string())?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+//     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    let results: Vec<String> = stdout
-        .lines()
-        .filter(|line| Path::new(line).is_dir())
-        .map(|s| s.to_string())
-        .collect();
+//     let results: Vec<String> = stdout
+//         .lines()
+//         .filter(|line| Path::new(line).is_dir())
+//         .map(|s| s.to_string())
+//         .collect();
 
-    Ok(results)
-}
+//     Ok(results)
+// }
 
 #[tauri::command]
 async fn get_images_in_dir(path: String) -> Result<Vec<String>, String> {
@@ -34,10 +35,8 @@ async fn get_images_in_dir(path: String) -> Result<Vec<String>, String> {
     let mut image_paths = Vec::new();
 
     // ディレクトリの内容を読み込む
-    let entries = match fs::read_dir(&path) {
-        Ok(e) => e,
-        Err(e) => return Err(format!("ディレクトリの読み込みに失敗しました: {}", e)),
-    };
+    let entries =
+        fs::read_dir(&path).map_err(|e| format!("ディレクトリの読み込みに失敗しました: {}", e))?;
 
     for entry in entries {
         let entry = match entry {
@@ -66,10 +65,28 @@ async fn get_images_in_dir(path: String) -> Result<Vec<String>, String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![
-            search_with_plocate,
-            get_images_in_dir
-        ])
+        .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            match db::Database::new("comic_viewer.db") {
+                Ok(db) => {
+                    app.manage(db);
+                }
+                Err(e) => {
+                    let err_msg = format!("データベースの初期化に失敗しました: {}", e);
+                    eprintln!("{}", err_msg);
+                    // エラーメッセージダイアログを表示する
+                    app.dialog()
+                        .message(&err_msg)
+                        .title("初期化エラー")
+                        .kind(MessageDialogKind::Error)
+                        .show(|_| {
+                            std::process::exit(1);
+                        });
+                }
+            };
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![get_images_in_dir])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
