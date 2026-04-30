@@ -1,5 +1,6 @@
 <script lang="ts">
     import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+    import { open } from "@tauri-apps/plugin-dialog";
 
     // 検索用の状態
     let query = $state("");
@@ -12,8 +13,41 @@
         imagePaths.length > 0 ? convertFileSrc(imagePaths[currentIndex]) : null,
     );
 
+    // DB構築（インポート）処理を追加
+    let isImporting = $state(false); // ローディング表示用の状態変数
+
+    async function importComicInfo() {
+        try {
+            // ユーザーにディレクトリを選択させる
+            const selectedPath = await open({
+                directory: true,
+                multiple: false,
+                title: "インポートするコミックのルートフォルダを選択してください",
+            });
+
+            if (!selectedPath) {
+                return; // キャンセルされた場合
+            }
+
+            isImporting = true;
+
+            const importedCount = await invoke<number>("scan_and_import", {
+                path: selectedPath,
+            });
+
+            alert(
+                `インポート完了: ${importedCount} 件のコミックをデータベースに登録しました。`,
+            );
+        } catch (error) {
+            console.error("Import failed:", error);
+            alert(`インポート中にエラーが発生しました: ${error}`);
+        } finally {
+            isImporting = false;
+        }
+    }
+
     // plocate で検索
-    async function searchWithPlocate() {
+    async function searchDb() {
         // 空文字の場合は検索せずに結果をクリア
         if (!query || !query.trim()) {
             searchResults = [];
@@ -21,10 +55,7 @@
         }
 
         try {
-            searchResults = await invoke("search_with_plocate", {
-                query,
-                dbPath: "/var/lib/plocate/HDD2.db",
-            });
+            searchResults = await invoke("search_items", { query });
         } catch (error) {
             console.error("Search failed:", error);
         }
@@ -77,12 +108,19 @@
                 <input
                     type="text"
                     bind:value={query}
-                    placeholder="ディレクトリ検索..."
+                    placeholder="検索キーワードを入力..."
                     onkeydown={(e) => {
-                        e.key === "Enter" && searchWithPlocate();
+                        e.key === "Enter" && searchDb();
                     }}
                 />
-                <button onclick={searchWithPlocate}>🔍</button>
+                <button onclick={searchDb}>検索</button>
+                <button
+                    class="import-btn"
+                    onclick={importComicInfo}
+                    disabled={isImporting}
+                >
+                    {isImporting ? "インポート中..." : "DB構築 (Import)"}
+                </button>
             </div>
 
             <ul class="results">
@@ -138,9 +176,20 @@
         cursor: pointer;
         transition: background 0.2s;
     }
-    .search-box button:hover {
+    .search-box button:hover:not(:disabled) {
         background: #2a51a9;
     }
+    .search-box button.import-btn {
+        background: #2f855a;
+    }
+    .search-box button.import-btn:hover:not(:disabled) {
+        background: #22543d;
+    }
+    .search-box button:disabled {
+        background: #555;
+        cursor: not-allowed;
+    }
+
     .results {
         list-style: none;
         padding: 0;

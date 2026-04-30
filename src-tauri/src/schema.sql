@@ -69,6 +69,10 @@ CREATE INDEX IF NOT EXISTS idx_item_tags_item_id ON item_tags(item_id);
 
 -- 初期値
 INSERT OR IGNORE INTO types (id, name) VALUES
-    (1, 'doujinshi'), (2, 'artistcg'),
-    (3, 'manga'),     (4, 'gamecg'),
-    (5, 'imageset'),  (6, 'anime');
+    (0, 'unknown'),
+    (1, 'doujinshi'),
+    (2, 'artistcg'),
+    (3, 'manga'),
+    (4, 'gamecg'),
+    (5, 'imageset'),
+    (6, 'anime');

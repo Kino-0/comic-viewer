@@ -1,7 +1,6 @@
 use rusqlite::{Connection, Result, params};
 use std::sync::Mutex;
 
-// パースした情報を保持する構造体
 #[derive(Debug, Default)]
 pub struct Info {
     pub gallery_id: Option<i64>,
@@ -23,8 +22,7 @@ impl Database {
     pub fn new(path: &str) -> Result<Self> {
         let conn = Connection::open(path)?;
         conn.execute("PRAGMA foreign_keys = ON;", [])?;
-        let init_sql = include_str!("./schema.sql");
-        conn.execute_batch(init_sql)?;
+        conn.execute_batch(include_str!("./schema.sql"))?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -33,13 +31,6 @@ impl Database {
     pub fn insert_info(&self, info: &Info, dir_path: &str) -> Result<()> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
-
-        // 1. types テーブル
-        let type_id: u8 = tx.query_row(
-            "SELECT id FROM types WHERE name = ?1",
-            params![info.type_name],
-            |row| row.get(0),
-        )?;
 
         // 共通クロージャ: マスタからIDを取得（なければ新規作成）
         let get_or_create_master_id = |table: &str, name: &str| -> Result<i64> {
@@ -59,6 +50,14 @@ impl Database {
                 Err(e) => Err(e),
             }
         };
+
+        // 1. types テーブル
+        let type_id: i64 = if info.type_name.is_empty() {
+            get_or_create_master_id("types", "unknown")?
+        } else {
+            get_or_create_master_id("types", &info.type_name)?
+        };
+
         // 2. languages テーブル
         let language_id: Option<i64> = if info.language.is_empty() {
             None
@@ -134,5 +133,100 @@ impl Database {
 
         tx.commit()?;
         Ok(())
+    }
+
+    pub fn search_items(&self, query_str: &str) -> rusqlite::Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+
+        let mut base_query = String::from("SELECT DISTINCT i.path FROM items i WHERE 1=1");
+        let mut params: Vec<String> = Vec::new();
+
+        let terms = query_str.split_whitespace();
+
+        // ワイルドカード文字をエスケープするクロージャ
+        let escape_like = |s: &str| -> String {
+            s.replace('\\', r"\\")
+                .replace('%', r"\%")
+                .replace('_', r"\_")
+        };
+
+        for term in terms {
+            // 除外検索プレフィックスの処理
+            let is_exclude = term.starts_with('-');
+            let actual_term = if is_exclude { &term[1..] } else { &term };
+
+            if actual_term.is_empty() {
+                continue;
+            }
+
+            if let Some((prefix, value)) = actual_term.split_once(':') {
+                // プレフィックスの処理
+                let (table_rel, table_master, fk_col) = match prefix.to_lowercase().as_str() {
+                    "tag" => ("item_tags", "tags", "tag_id"),
+                    "artist" => ("item_artists", "artists", "artist_id"),
+                    "group" => ("item_groups", "groups", "group_id"),
+                    "series" => ("item_series", "series", "series_id"),
+                    "character" => ("item_characters", "characters", "character_id"),
+                    "language" => {
+                        if is_exclude {
+                            base_query.push_str(
+                                " AND (i.language_id IS NULL OR i.language_id NOT IN (SELECT id FROM languages WHERE name = ?))"
+                            );
+                        } else {
+                            base_query.push_str(
+                                " AND i.language_id IN (SELECT id FROM languages WHERE name = ?)",
+                            );
+                        }
+                        params.push(value.to_string());
+                        continue;
+                    }
+                    "type" => {
+                        if is_exclude {
+                            base_query.push_str(
+                                " AND (i.type_id IS NULL OR i.type_id NOT IN (SELECT id FROM types WHERE name = ?))"
+                            );
+                        } else {
+                            base_query.push_str(
+                                " AND i.type_id IN (SELECT id FROM types WHERE name = ?)",
+                            );
+                        }
+                        params.push(value.to_string());
+                        continue;
+                    }
+                    _ => {
+                        // 未知のプレフィックスは通常のタイトル検索としてフォールバック
+                        let condition = if is_exclude { "NOT LIKE" } else { "LIKE" };
+                        base_query.push_str(&format!(" AND i.title {} ? ESCAPE '\\'", condition));
+                        params.push(format!("%{}%", escape_like(actual_term)));
+                        continue;
+                    }
+                };
+
+                // 中間テーブルを経由する検索条件の構築
+                let exists_clause = if is_exclude { "NOT EXISTS" } else { "EXISTS" };
+                base_query.push_str(&format!(
+                    " AND {} (SELECT 1 FROM {} rel JOIN {} m ON rel.{} = m.id WHERE rel.item_id = i.id AND m.name = ?)",
+                    exists_clause, table_rel, table_master, fk_col
+                ));
+                params.push(value.to_string());
+            } else {
+                // プレフィックスなしの場合はタイトル検索
+                let condition = if is_exclude { "NOT LIKE" } else { "LIKE" };
+                base_query.push_str(&format!(" AND i.title {} ? ESCAPE '\\'", condition));
+                params.push(format!("%{}%", escape_like(actual_term)));
+            }
+        }
+
+        base_query.push_str(" ORDER BY i.id DESC");
+
+        let mut stmt = conn.prepare(&base_query)?;
+
+        // params_from_iterを使って動的パラメータをバインド
+        let paths = stmt
+            .query_map(rusqlite::params_from_iter(params), |row| row.get(0))?
+            .filter_map(Result::ok)
+            .collect::<Vec<String>>();
+
+        Ok(paths)
     }
 }
