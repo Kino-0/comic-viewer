@@ -28,35 +28,35 @@ CREATE TABLE IF NOT EXISTS item_artists (
     PRIMARY KEY (artist_id, item_id),
     FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
     FOREIGN KEY (artist_id) REFERENCES artists(id) ON DELETE CASCADE
-) WITHOUT ROWID STRICT;
+) WITHOUT ROWID, STRICT;
 CREATE TABLE IF NOT EXISTS item_groups (
     group_id INTEGER,
     item_id  INTEGER,
     PRIMARY KEY (group_id, item_id),
     FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
     FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE
-) WITHOUT ROWID STRICT;
+) WITHOUT ROWID, STRICT;
 CREATE TABLE IF NOT EXISTS item_series (
     series_id INTEGER,
     item_id   INTEGER,
     PRIMARY KEY (series_id, item_id),
     FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
     FOREIGN KEY (series_id) REFERENCES series(id) ON DELETE CASCADE
-) WITHOUT ROWID STRICT;
+) WITHOUT ROWID, STRICT;
 CREATE TABLE IF NOT EXISTS item_characters (
     character_id INTEGER,
     item_id      INTEGER,
     PRIMARY KEY (character_id, item_id),
     FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
     FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
-) WITHOUT ROWID STRICT;
+) WITHOUT ROWID, STRICT;
 CREATE TABLE IF NOT EXISTS item_tags (
     tag_id  INTEGER,
     item_id INTEGER,
     PRIMARY KEY (tag_id, item_id),
     FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
     FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
-) WITHOUT ROWID STRICT;
+) WITHOUT ROWID, STRICT;
 
 -- インデックス
 CREATE INDEX IF NOT EXISTS idx_items_type_id ON items(type_id);
