@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "comic-viewer",
   "version": "0.1.0",
-  "identifier": "com.comic-viewer.app",
+  "identifier": "com.comic-viewer",
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
@@ -20,7 +20,7 @@
     "security": {
       "assetProtocol": {
         "enable": true,
-        "scope": ["/media/kino_10/HDD2/**"]
+        "scope": ["**"]
       },
       "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost https://asset.localhost data: blob:;"
     }

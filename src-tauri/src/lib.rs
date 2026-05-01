@@ -1,3 +1,5 @@
+//! Tauriアプリケーションのバックエンドロジックとコマンドを提供するモジュール。
+
 mod db;
 use db::Info;
 use std::fs;
@@ -5,6 +7,17 @@ use tauri::Manager;
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use walkdir::WalkDir;
 
+/// 指定されたディレクトリ内の画像ファイルパスのリストを取得します。
+///
+/// サポートしている拡張子は `png`, `jpg`, `jpeg`, `webp`, `gif` です。
+///
+/// # Arguments
+///
+/// * `path` - 画像を検索する対象のディレクトリパス。
+///
+/// # Returns
+///
+/// 成功した場合は画像のパス文字列のリストを返し、失敗した場合はエラー文字列を返します。
 #[tauri::command]
 async fn get_images_in_dir(path: String) -> Result<Vec<String>, String> {
     let supported_extensions = ["png", "jpg", "jpeg", "webp", "gif"];
@@ -38,7 +51,17 @@ async fn get_images_in_dir(path: String) -> Result<Vec<String>, String> {
     Ok(image_paths)
 }
 
-// info.txt の内容をパースするヘルパー関数
+/// `info.txt` のテキスト内容を解析し、[`Info`] 構造体に変換します。
+///
+/// コロン `:` で区切られたキーと値のペアを読み取り、適切なフィールドに割り当てます。
+///
+/// # Arguments
+///
+/// * `content` - `info.txt` の文字列データ。
+///
+/// # Returns
+///
+/// パースされたギャラリー情報を保持する [`Info`] 構造体。
 fn parse_info_txt(content: &str) -> Info {
     let mut info = Info::default();
 
@@ -82,6 +105,16 @@ fn parse_info_txt(content: &str) -> Info {
     info
 }
 
+/// 指定されたパスを再帰的にスキャンし、見つかった `info.txt` をデータベースにインポートします。
+///
+/// # Arguments
+///
+/// * `path` - スキャンを開始するディレクトリのパス。
+/// * `db` - アプリケーションのステートとして管理されているデータベースインスタンス。
+///
+/// # Returns
+///
+/// 正常にインポートされたギャラリーの総数を返します。
 #[tauri::command]
 async fn scan_and_import(
     path: String,
@@ -117,6 +150,16 @@ async fn scan_and_import(
     Ok(imported_count) // 成功したインポート件数を返す
 }
 
+/// クエリ文字列に基づいてデータベースを検索し、一致するアイテムのパスを取得します。
+///
+/// # Arguments
+///
+/// * `query` - 検索クエリ文字列。
+/// * `db` - アプリケーションのステートとして管理されているデータベースインスタンス。
+///
+/// # Returns
+///
+/// 検索にヒットしたパスのリストを返し、データベースエラーが発生した場合はエラー文字列を返します。
 #[tauri::command]
 async fn search_items(
     query: String,
@@ -125,13 +168,28 @@ async fn search_items(
     db.search_items(&query).map_err(|e| e.to_string())
 }
 
+/// Tauriアプリケーションを初期化し、実行します。
+///
+/// データベースの接続設定、各種プラグインの初期化、およびTauriコマンドの登録を行います。
+/// データベースの初期化に失敗した場合、エラーダイアログを表示してアプリケーションを終了します。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            match db::Database::new("comic_viewer.db") {
+            // アプリケーション固有のデータディレクトリを取得する
+            let mut db_path = app
+                .path()
+                .app_local_data_dir()
+                .expect("Failed to get local data dir");
+
+            // ディレクトリが存在しない場合は作成する
+            std::fs::create_dir_all(&db_path).expect("Failed to create local data dir");
+
+            // データベースのファイル名をパスに追加する
+            db_path.push("comic_viewer.db");
+            match db::Database::new(db_path.to_str().unwrap()) {
                 Ok(db) => {
                     app.manage(db);
                 }

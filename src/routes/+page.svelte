@@ -1,6 +1,9 @@
 <script lang="ts">
     import { invoke, convertFileSrc } from "@tauri-apps/api/core";
     import { open } from "@tauri-apps/plugin-dialog";
+    import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+    import { emit, listen } from "@tauri-apps/api/event";
+    import { onMount } from "svelte";
 
     // 検索用の状態
     let query = $state("");
@@ -13,8 +16,59 @@
         imagePaths.length > 0 ? convertFileSrc(imagePaths[currentIndex]) : null,
     );
 
-    // DB構築（インポート）処理を追加
     let isImporting = $state(false); // ローディング表示用の状態変数
+
+    // --- 同期（ミラーリング）システムの構築 ---
+    onMount(() => {
+        // 1. 新しい画像群が読み込まれたとき、または閉じられたときの同期
+        const unlistenState = listen<{
+            imagePaths: string[];
+            currentIndex: number;
+        }>("sync-state", (event) => {
+            imagePaths = event.payload.imagePaths;
+            currentIndex = event.payload.currentIndex;
+        });
+
+        // 2. ページがめくられたときのインデックス同期
+        const unlistenIndex = listen<{ currentIndex: number }>(
+            "sync-index",
+            (event) => {
+                currentIndex = event.payload.currentIndex;
+            },
+        );
+
+        // 3. 新規ウィンドウが立ち上がった際に、現在の状態を要求されるので応える
+        const unlistenReq = listen("request-sync", () => {
+            if (imagePaths.length > 0) {
+                emit("sync-state", { imagePaths, currentIndex });
+            }
+        });
+
+        // 自身が新しく開かれたウィンドウの場合、既存ウィンドウに状態を要求する
+        emit("request-sync");
+
+        return () => {
+            unlistenState.then((f) => f());
+            unlistenIndex.then((f) => f());
+            unlistenReq.then((f) => f());
+        };
+    });
+
+    // ミラーウィンドウを新規作成する関数
+    async function openMirrorWindow() {
+        const label = `mirror-${Date.now()}`;
+        const mirror = new WebviewWindow(label, {
+            url: "/",
+            title: "Comic Viewer (Mirror)",
+            width: 800,
+            height: 600,
+        });
+
+        mirror.once("tauri://error", (e) => {
+            console.error("ウィンドウの作成に失敗しました:", e);
+        });
+    }
+    // ----------------------------------------
 
     async function importComicInfo() {
         try {
@@ -22,7 +76,7 @@
             const selectedPath = await open({
                 directory: true,
                 multiple: false,
-                title: "インポートするコミックのルートフォルダを選択してください",
+                title: "インポートするディレクトリを選択してください",
             });
 
             if (!selectedPath) {
@@ -46,7 +100,6 @@
         }
     }
 
-    // plocate で検索
     async function searchDb() {
         // 空文字の場合は検索せずに結果をクリア
         if (!query || !query.trim()) {
@@ -68,8 +121,15 @@
             });
 
             if (files.length > 0) {
-                imagePaths = files.sort();
+                const sortedPaths = files.sort();
+                imagePaths = sortedPaths;
                 currentIndex = 0;
+
+                // 開いた画像を他のウィンドウにも同期する
+                emit("sync-state", {
+                    imagePaths: sortedPaths,
+                    currentIndex: 0,
+                });
             } else {
                 console.warn("このディレクトリには画像がありません");
             }
@@ -81,19 +141,51 @@
     // ビューア起動中のキー操作
     function handleKeydown(event: KeyboardEvent) {
         if (imagePaths.length === 0) return;
+
+        let newIndex = currentIndex;
+
         switch (event.key) {
-            case "ArrowRight":
-                currentIndex = Math.min(
-                    currentIndex + 1,
-                    imagePaths.length - 1,
-                );
-                break;
             case "ArrowLeft":
-                currentIndex = Math.max(currentIndex - 1, 0);
+                newIndex = Math.min(currentIndex + 1, imagePaths.length - 1);
+                break;
+            case "ArrowRight":
+                newIndex = Math.max(currentIndex - 1, 0);
                 break;
             case "Escape":
                 imagePaths = [];
+                currentIndex = 0;
+                // 閉じた状態を他のウィンドウにも同期する
+                emit("sync-state", { imagePaths: [], currentIndex: 0 });
+                return;
+        }
+
+        // ページがめくられた場合のみ、他のウィンドウへ同期イベントを送信
+        if (newIndex !== currentIndex) {
+            currentIndex = newIndex;
+            emit("sync-index", { currentIndex });
+        }
+    }
+    // ビューア起動中のマウス操作
+    function handleMouseClick(event: MouseEvent) {
+        if (imagePaths.length === 0) return;
+
+        let newIndex = currentIndex;
+
+        switch (event.button) {
+            case 0:
+                // 左クリック (button: 0): 次のページへ
+                newIndex = Math.min(currentIndex + 1, imagePaths.length - 1);
                 break;
+            case 2:
+                // 右クリック (button: 2): 前のページへ
+                newIndex = Math.max(currentIndex - 1, 0);
+                break;
+        }
+
+        // ページがめくられた場合のみ、他のウィンドウへ同期イベントを送信
+        if (newIndex !== currentIndex) {
+            currentIndex = newIndex;
+            emit("sync-index", { currentIndex });
         }
     }
 </script>
@@ -119,12 +211,16 @@
                     onclick={importComicInfo}
                     disabled={isImporting}
                 >
-                    {isImporting ? "インポート中..." : "DB構築 (Import)"}
+                    {isImporting ? "インポート中..." : "DB更新 (Import)"}
+                </button>
+                <!-- ミラーウィンドウを開くボタン -->
+                <button class="mirror-btn" onclick={openMirrorWindow}>
+                    ミラーを開く
                 </button>
             </div>
 
             <ul class="results">
-                {#each searchResults as path}
+                {#each searchResults as path (path)}
                     <li>
                         <button
                             type="button"
@@ -136,7 +232,13 @@
             </ul>
         </div>
     {:else}
-        <div class="viewer" role="button" tabindex="0">
+        <div
+            class="viewer"
+            role="button"
+            tabindex="0"
+            onmousedown={handleMouseClick}
+            oncontextmenu={(e) => e.preventDefault()}
+        >
             <img src={currentImage} alt="Comic page" />
             <div class="info">Press Esc to return to search</div>
         </div>
@@ -185,6 +287,12 @@
     .search-box button.import-btn:hover:not(:disabled) {
         background: #22543d;
     }
+    .search-box button.mirror-btn {
+        background: #805ad5;
+    }
+    .search-box button.mirror-btn:hover:not(:disabled) {
+        background: #6b46c1;
+    }
     .search-box button:disabled {
         background: #555;
         cursor: not-allowed;
@@ -223,13 +331,14 @@
         background: black;
     }
     img {
-        max-height: 100%;
-        max-width: 100%;
+        height: 100%;
+        width: 100%;
+        object-fit: contain;
     }
     .info {
         position: absolute;
         top: 10px;
-        color: #555;
+        color: oklch(50% 0 0 / 30%);
         font-size: 0.8rem;
     }
 </style>
