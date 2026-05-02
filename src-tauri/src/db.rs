@@ -178,8 +178,8 @@ impl Database {
                 // 本家のギャラリーIDとの衝突を避けるため、負の数で採番する。
                 let min_negative_new_id: i64 = tx
                     .query_row("SELECT MIN(id) FROM items WHERE id < 0", [], |row| {
-                        row.get(0)
-                    })
+                        row.get::<_, Option<i64>>(0)
+                    })?
                     .unwrap_or(0)
                     - 1;
 
