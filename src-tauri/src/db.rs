@@ -136,10 +136,14 @@ impl Database {
     /// * `info` - 挿入するギャラリーのメタデータ情報。
     /// * `dir_path` - ギャラリーの画像が保存されているディレクトリパス。
     ///
+    /// # Returns
+    ///
+    /// 登録された、または既存のアイテムID (i64) を返します。
+    ///
     /// # Errors
     ///
     /// トランザクションの実行やコミットに失敗した場合にエラーを返します。
-    pub fn insert_info(&self, info: &Info, dir_path: &str) -> Result<()> {
+    pub fn insert_info(&self, info: &Info, dir_path: &str) -> Result<i64> {
         let mut conn = self.conn.lock().expect("Database lock poisoned");
         let tx = conn.transaction()?;
 
@@ -222,7 +226,7 @@ impl Database {
         Self::insert_relations(&tx, "tags", "item_tags", "tag_id", item_id, &info.tags)?;
 
         tx.commit()?;
-        Ok(())
+        Ok(item_id)
     }
 
     /// 検索クエリに基づいてアイテムのパス一覧を取得します。
