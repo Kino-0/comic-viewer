@@ -35,7 +35,7 @@ async fn get_images_in_dir(path: String) -> Result<Vec<String>, String> {
     for entry in entries.filter_map(Result::ok) {
         let path_buf = entry.path();
 
-        if path_buf.is_file() {
+        if !path_buf.is_file() {
             continue;
         }
 
