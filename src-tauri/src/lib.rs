@@ -23,7 +23,7 @@ use walkdir::WalkDir;
 ///
 /// 画像のパスのリストを返します。
 #[tauri::command]
-async fn get_images_in_dir(path: String) -> Result<Vec<String>, String> {
+fn get_images_in_dir(path: String) -> Result<Vec<String>, String> {
     let supported_extensions = ["png", "jpg", "jpeg", "webp", "gif"];
 
     let mut image_paths = Vec::new();
@@ -163,10 +163,7 @@ fn import_single_gallery(path: &Path, db: &db::Database) -> Result<(), String> {
 ///
 /// 正常にインポートされたギャラリーの総数を返します。
 #[tauri::command]
-async fn scan_and_import(
-    path: String,
-    db: tauri::State<'_, db::Database>,
-) -> Result<usize, String> {
+fn scan_and_import(path: String, db: tauri::State<'_, db::Database>) -> Result<usize, String> {
     let mut imported_count = 0;
 
     for entry in WalkDir::new(&path).into_iter().filter_map(|e| e.ok()) {
@@ -192,10 +189,7 @@ async fn scan_and_import(
 ///
 /// 検索にヒットしたパスのリストを返し、データベースエラーが発生した場合はエラー文字列を返します。
 #[tauri::command]
-async fn search_items(
-    query: String,
-    db: tauri::State<'_, db::Database>,
-) -> Result<Vec<String>, String> {
+fn search_items(query: String, db: tauri::State<'_, db::Database>) -> Result<Vec<String>, String> {
     db.search_items(&query).map_err(|e| e.to_string())
 }
 
