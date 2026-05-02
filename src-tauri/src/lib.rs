@@ -220,7 +220,7 @@ pub fn run() {
 
             // データベースのファイル名をパスに追加する
             db_path.push("comic_viewer.db");
-            match db::Database::new(db_path.to_str().unwrap()) {
+            match db::Database::new(&db_path) {
                 Ok(db) => {
                     app.manage(db);
                 }

@@ -3,7 +3,7 @@
 //! SQLiteを使用してコミックのメタデータ情報を保存および検索するための機能を提供します。
 
 use rusqlite::{Connection, Result, params};
-use std::sync::Mutex;
+use std::{path::Path, sync::Mutex};
 
 /// コミックのメタ情報を保持する構造体。
 #[derive(Debug, Default)]
@@ -38,7 +38,7 @@ impl Database {
     /// # Errors
     ///
     /// データベースのオープンや初期化処理に失敗した場合にエラーを返します。
-    pub fn new(path: &str) -> Result<Self> {
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
         let conn = Connection::open(path)?;
         conn.execute("PRAGMA foreign_keys = ON;", [])?;
         conn.execute_batch(include_str!("./schema.sql"))?;
