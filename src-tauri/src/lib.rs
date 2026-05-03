@@ -3,7 +3,7 @@
 mod db;
 use db::Info;
 use std::{
-    fs::{self, OpenOptions, ReadDir},
+    fs::{self, OpenOptions},
     io::Write,
     path::Path,
 };
@@ -11,9 +11,13 @@ use tauri::Manager;
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use walkdir::WalkDir;
 
-/// 指定されたディレクトリ内の画像ファイルパスのリストを取得します。
+/// 指定されたディレクトリ直下にある画像ファイルパスのリストを取得します。
 ///
-/// サポートしている拡張子は `png`, `jpg`, `jpeg`, `webp`, `gif` です。
+/// * 非再帰的: サブディレクトリ内のファイルは検索されません。
+/// * 拡張子: サポートしている拡張子は `png`, `jpg`, `jpeg`, `webp`, `gif` です。
+/// * Case: 拡張子の判定において、大文字と小文字は区別されません（例: `.PNG` や `.Jpg` も対象となります）。
+/// * エンコーディング: ファイルパスや拡張子が有効なUTF-8文字列に変換できないファイルは、結果からスキップされます。
+/// * アクセス権限: 個別のファイルエントリの読み込みに失敗した場合は、そのファイルをスキップします。
 ///
 /// # Arguments
 ///
@@ -21,33 +25,38 @@ use walkdir::WalkDir;
 ///
 /// # Returns
 ///
-/// 画像のパスのリストを返します。
+/// 成功した場合は、画像パスのリスト (`Vec<String>`) を返します。
+///
+/// # Errors
+///
+/// 以下の理由などにより、指定されたディレクトリ自体の読み込みに失敗した場合はエラーメッセージ（`String`）を返します。
+/// * ディレクトリが存在しない
+/// * ディレクトリに対する読み取り権限がない
 #[tauri::command]
-fn get_images_in_dir(path: String) -> Result<Vec<String>, String> {
-    let supported_extensions = ["png", "jpg", "jpeg", "webp", "gif"];
+fn get_images_in_dir(path: std::path::PathBuf) -> Result<Vec<String>, String> {
+    const SUPPORTED_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "gif"];
 
-    let mut image_paths = Vec::new();
+    let entries = std::fs::read_dir(&path)
+        .map_err(|e| format!("ディレクトリの読み込みに失敗しました: {}", e))?;
 
-    // ディレクトリの内容を読み込む
-    let entries: ReadDir =
-        fs::read_dir(&path).map_err(|e| format!("ディレクトリの読み込みに失敗しました: {}", e))?;
+    let image_paths: Vec<String> = entries
+        .filter_map(Result::ok) // エラーになったエントリはスキップ
+        .filter(|entry| entry.file_type().is_ok_and(|ft| ft.is_file())) // シンボリックリンク等を除外
+        .filter_map(|entry| {
+            let path = entry.path();
+            let extension = path.extension()?.to_str()?; // 拡張子がない、またはUTF-8でない場合はスキップ
 
-    for entry in entries.filter_map(Result::ok) {
-        let path_buf = entry.path();
-
-        if !path_buf.is_file() {
-            continue;
-        }
-
-        let Some(extension) = path_buf.extension().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        // 拡張子をチェック
-        if supported_extensions.contains(&extension.to_lowercase().as_str()) {
-            // パス全体をStringとして格納
-            image_paths.push(path_buf.to_string_lossy().to_string());
-        }
-    }
+            if SUPPORTED_EXTENSIONS
+                .iter()
+                .any(|&s| s.eq_ignore_ascii_case(extension))
+            // 大文字・小文字を区別しない
+            {
+                Some(path.to_str()?.to_owned()) // パスがUTF-8でない場合はスキップ
+            } else {
+                None
+            }
+        })
+        .collect();
 
     Ok(image_paths)
 }
