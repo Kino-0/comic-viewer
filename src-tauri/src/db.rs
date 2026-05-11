@@ -1,9 +1,9 @@
 //! データベース操作を管理するモジュール。
 //!
-//! SQLiteを使用してコミックのメタデータ情報を保存および検索するための機能を提供します。
+//! `SQLite`を使用してコミックのメタデータ情報を保存および検索するための機能を提供します。
 
 use rusqlite::{Connection, Result, params};
-use std::{path::Path, sync::Mutex};
+use std::{fmt::Write, path::Path, sync::Mutex};
 
 /// コミックのメタ情報を保持する構造体。
 #[derive(Debug, Default)]
@@ -19,7 +19,8 @@ pub struct Info {
     pub language: String,
 }
 
-/// SQLiteデータベースの接続を管理する構造体。
+
+/// `SQLite` データベースの接続を管理する構造体。
 ///
 /// スレッドセーフにアクセスできるように、`Mutex`で接続をラップしています。
 pub struct Database {
@@ -63,8 +64,8 @@ impl Database {
         table: &str,
         name: &str,
     ) -> rusqlite::Result<i64> {
-        let select_sql = format!("SELECT id FROM {} WHERE name = ?1", table);
-        let insert_sql = format!("INSERT INTO {} (name) VALUES (?1)", table);
+        let select_sql = format!("SELECT id FROM {table} WHERE name = ?1");
+        let insert_sql = format!("INSERT INTO {table} (name) VALUES (?1)");
 
         let mut stmt_select = tx.prepare_cached(&select_sql)?;
 
@@ -106,10 +107,8 @@ impl Database {
             return Ok(());
         }
 
-        let insert_rel_sql = format!(
-            "INSERT OR IGNORE INTO {} ({}, item_id) VALUES (?1, ?2)",
-            table_rel, master_col
-        );
+        let insert_rel_sql =
+            format!("INSERT OR IGNORE INTO {table_rel} ({master_col}, item_id) VALUES (?1, ?2)");
         let mut stmt_insert_rel = tx.prepare_cached(&insert_rel_sql)?;
 
         for name in names {
@@ -166,15 +165,13 @@ impl Database {
         };
 
         // 3. items テーブルへの挿入
-        let item_id = match info.gallery_id {
-            Some(id) => {
+        let item_id = if let Some(id) = info.gallery_id {
                 tx.execute(
                     "INSERT OR IGNORE INTO items (id, title, type_id, language_id, path) VALUES (?1, ?2, ?3, ?4, ?5)",
                     params![id, info.title, type_id, language_id, dir_path],
                 )?;
                 id
-            }
-            None => {
+        } else {
                 // 本家のギャラリーIDとの衝突を避けるため、負の数で採番する。
                 let min_negative_new_id: i64 = tx
                     .query_row("SELECT MIN(id) FROM items WHERE id < 0", [], |row| {
@@ -188,7 +185,6 @@ impl Database {
                     params![min_negative_new_id, info.title, type_id, language_id, dir_path],
                 )?;
                 min_negative_new_id
-            }
         };
 
         Self::insert_relations(
@@ -258,10 +254,14 @@ impl Database {
                 .replace('_', r"\_")
         };
 
-        for term in terms {
+        for term in &terms {
             // 除外検索プレフィックスの処理
             let is_exclude = term.starts_with('-');
-            let actual_term = if is_exclude { &term[1..] } else { &term };
+            let actual_term = if is_exclude {
+                &term[1..]
+            } else {
+                term.as_str()
+            };
 
             if actual_term.is_empty() {
                 continue;
@@ -304,7 +304,7 @@ impl Database {
                     _ => {
                         // 未知のプレフィックスは通常のタイトル検索としてフォールバック
                         let condition = if is_exclude { "NOT LIKE" } else { "LIKE" };
-                        base_query.push_str(&format!(" AND i.title {} ? ESCAPE '\\'", condition));
+                        let _ = write!(base_query, " AND i.title {condition} ? ESCAPE '\\'");
                         params.push(format!("%{}%", escape_like(actual_term)));
                         continue;
                     }
@@ -312,15 +312,12 @@ impl Database {
 
                 // 中間テーブルを経由する検索条件の構築
                 let exists_clause = if is_exclude { "NOT EXISTS" } else { "EXISTS" };
-                base_query.push_str(&format!(
-                    " AND {} (SELECT 1 FROM {} rel JOIN {} m ON rel.{} = m.id WHERE rel.item_id = i.id AND m.name = ?)",
-                    exists_clause, table_rel, table_master, fk_col
-                ));
+                let _ = write!(base_query, " AND {exists_clause} (SELECT 1 FROM {table_rel} rel JOIN {table_master} m ON rel.{fk_col} = m.id WHERE rel.item_id = i.id AND m.name = ?)");
                 params.push(value.to_string());
             } else {
                 // プレフィックスなしの場合はタイトル検索
                 let condition = if is_exclude { "NOT LIKE" } else { "LIKE" };
-                base_query.push_str(&format!(" AND i.title {} ? ESCAPE '\\'", condition));
+                let _ = write!(base_query, " AND i.title {condition} ? ESCAPE '\\'");
                 params.push(format!("%{}%", escape_like(actual_term)));
             }
         }

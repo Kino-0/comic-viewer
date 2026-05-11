@@ -37,7 +37,7 @@ fn get_images_in_dir(path: std::path::PathBuf) -> Result<Vec<String>, String> {
     const SUPPORTED_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "gif"];
 
     let entries = std::fs::read_dir(&path)
-        .map_err(|e| format!("ディレクトリの読み込みに失敗しました: {}", e))?;
+        .map_err(|e| format!("ディレクトリの読み込みに失敗しました: {e}"))?;
 
     let image_paths: Vec<String> = entries
         .filter_map(Result::ok) // エラーになったエントリはスキップ
@@ -133,7 +133,7 @@ fn parse_info_txt(content: &str) -> Info {
 ///
 /// ファイルの読み書きやデータベースの挿入処理でエラーが発生した場合は、エラー文字列を返します。
 fn import_single_gallery(path: &Path, db: &db::Database) -> Result<(), String> {
-    let content = fs::read_to_string(path).map_err(|e| format!("ファイル読み込みエラー: {}", e))?;
+    let content = fs::read_to_string(path).map_err(|e| format!("ファイル読み込みエラー: {e}"))?;
 
     let info = parse_info_txt(&content);
 
@@ -145,17 +145,17 @@ fn import_single_gallery(path: &Path, db: &db::Database) -> Result<(), String> {
     // DBへの挿入
     let item_id = db
         .insert_info(&info, &dir_path)
-        .map_err(|e| format!("DB挿入エラー: {}", e))?;
+        .map_err(|e| format!("DB挿入エラー: {e}"))?;
 
     // ギャラリーIDが新規採番された場合、info.txtに追記
     if info.gallery_id.is_none() {
         let mut file = OpenOptions::new()
             .append(true)
             .open(path)
-            .map_err(|e| format!("info.txtオープンエラー: {}", e))?;
+            .map_err(|e| format!("info.txtオープンエラー: {e}"))?;
 
-        writeln!(file, "ギャラリーID: {}", item_id)
-            .map_err(|e| format!("info.txt追記エラー: {}", e))?;
+        writeln!(file, "ギャラリーID: {item_id}")
+            .map_err(|e| format!("info.txt追記エラー: {e}"))?;
     }
 
     Ok(())
@@ -178,8 +178,8 @@ fn scan_and_import(path: String, db: tauri::State<'_, db::Database>) -> Result<u
     for entry in WalkDir::new(&path).into_iter().filter_map(|e| e.ok()) {
         if entry.file_type().is_file() && entry.file_name() == "info.txt" {
             match import_single_gallery(entry.path(), &db) {
-                Ok(_) => imported_count += 1,
-                Err(e) => eprintln!("インポート失敗 ({:?}): {}", entry.path(), e),
+                Ok(()) => imported_count += 1,
+                Err(e) => eprintln!("インポート失敗 ({}): {e}", entry.path().display()),
             }
         }
     }
@@ -206,6 +206,13 @@ fn search_items(query: String, db: tauri::State<'_, db::Database>) -> Result<Vec
 ///
 /// データベースの接続設定、各種プラグインの初期化、およびTauriコマンドの登録を行います。
 /// データベースの初期化に失敗した場合、エラーダイアログを表示してアプリケーションを終了します。
+///
+/// # Panics
+///
+/// 以下の状況でパニックが発生する可能性があります：
+/// * ローカルデータディレクトリの取得に失敗した場合。
+/// * ローカルデータディレクトリの作成に失敗した場合。
+/// * Tauriアプリケーションの実行中に致命的なエラーが発生した場合。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -227,8 +234,8 @@ pub fn run() {
                     app.manage(db);
                 }
                 Err(e) => {
-                    let err_msg = format!("データベースの初期化に失敗しました: {}", e);
-                    eprintln!("{}", err_msg);
+                    let err_msg = format!("データベースの初期化に失敗しました: {e}");
+                    eprintln!("{err_msg}");
                     // エラーメッセージダイアログを表示する
                     app.dialog()
                         .message(&err_msg)
