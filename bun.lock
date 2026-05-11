@@ -5,18 +5,17 @@
     "": {
       "name": "comic-viewer",
       "dependencies": {
-        "@tauri-apps/api": "^2",
-        "@tauri-apps/plugin-opener": "^2",
+        "@tauri-apps/api": "^2.10.1",
       },
       "devDependencies": {
-        "@sveltejs/adapter-static": "^3.0.6",
-        "@sveltejs/kit": "^2.9.0",
-        "@sveltejs/vite-plugin-svelte": "^5.0.0",
-        "@tauri-apps/cli": "^2",
-        "svelte": "^5.0.0",
-        "svelte-check": "^4.0.0",
-        "typescript": "~5.6.2",
-        "vite": "^6.0.3",
+        "@sveltejs/adapter-static": "^3.0.10",
+        "@sveltejs/kit": "^2.58.0",
+        "@sveltejs/vite-plugin-svelte": "^5.1.1",
+        "@tauri-apps/cli": "^2.10.1",
+        "svelte": "^5.55.5",
+        "svelte-check": "^4.4.6",
+        "typescript": "~5.6.3",
+        "vite": "^6.4.2",
       },
     },
   },
@@ -172,8 +171,6 @@
     "@tauri-apps/cli-win32-ia32-msvc": ["@tauri-apps/cli-win32-ia32-msvc@2.10.1", "", { "os": "win32", "cpu": "ia32" }, "sha512-gXyxgEzsFegmnWywYU5pEBURkcFN/Oo45EAwvZrHMh+zUSEAvO5E8TXsgPADYm31d1u7OQU3O3HsYfVBf2moHw=="],
 
     "@tauri-apps/cli-win32-x64-msvc": ["@tauri-apps/cli-win32-x64-msvc@2.10.1", "", { "os": "win32", "cpu": "x64" }, "sha512-6Cn7YpPFwzChy0ERz6djKEmUehWrYlM+xTaNzGPgZocw3BD7OfwfWHKVWxXzdjEW2KfKkHddfdxK1XXTYqBRLg=="],
-
-    "@tauri-apps/plugin-opener": ["@tauri-apps/plugin-opener@2.5.3", "", { "dependencies": { "@tauri-apps/api": "^2.8.0" } }, "sha512-CCcUltXMOfUEArbf3db3kCE7Ggy1ExBEBl51Ko2ODJ6GDYHRp1nSNlQm5uNCFY5k7/ufaK5Ib3Du/Zir19IYQQ=="],
 
     "@types/cookie": ["@types/cookie@0.6.0", "", {}, "sha512-4Kh9a6B2bQciAhf7FSuMRRkUWecJgJu9nPnx3yzpsfXX/c50REIqpHY4C82bXP90qrLtXtkDxTZosYO3UpOwlA=="],
 
