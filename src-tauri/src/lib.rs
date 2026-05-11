@@ -3,11 +3,13 @@
 mod db;
 use db::Info;
 use std::{
+    collections::HashMap,
     fs::{self, OpenOptions},
     io::Write,
     path::Path,
+    sync::RwLock,
 };
-use tauri::Manager;
+use tauri::{Manager, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use walkdir::WalkDir;
 
@@ -161,21 +163,70 @@ fn import_single_gallery(path: &Path, db: &db::Database) -> Result<(), String> {
     Ok(())
 }
 
+/// サジェスチョン内容の各エントリを表す型（名前、元の名前、出現回数）。
+pub type SuggestionEntry = (String, String, usize);
+
+/// サジェスチョン内容を保持するインメモリキャッシュ。
+pub struct SuggestionCache(pub RwLock<HashMap<String, Vec<SuggestionEntry>>>);
+
+/// キャッシュされたサジェストデータから、キーワードに一致するものを取得します。
+///
+/// # Arguments
+///
+/// * `prefix` - 検索対象のカテゴリ（`tag`, `artist` など）。
+/// * `keyword` - 検索キーワード（部分一致）。
+/// * `cache` - キャッシュされているサジェストデータ。
+///
+/// # Returns
+///
+/// 最大20件のサジェスト結果を返します。
+#[tauri::command]
+fn get_suggestions(
+    prefix: String,
+    keyword: String,
+    cache: State<'_, SuggestionCache>,
+) -> Result<Vec<String>, String> {
+    let data_guard = cache.0.read().map_err(|_| "Cache Lock Error")?;
+
+    let Some(list) = data_guard.get(&prefix.to_lowercase()) else {
+        return Ok(vec![]);
+    };
+
+    let keyword_lower = keyword.to_lowercase();
+
+    let results = list
+        .iter()
+        .filter(|(_, lower_name, _)| lower_name.contains(&keyword_lower))
+        .take(20)
+        .map(|(name, _, _)| name.clone())
+        .collect();
+
+    Ok(results)
+}
+
 /// 指定されたパスを再帰的にスキャンし、見つかった `info.txt` をデータベースにインポートします。
 ///
 /// # Arguments
 ///
 /// * `path` - スキャンを開始するディレクトリのパス。
 /// * `db` - アプリケーションのステートとして管理されているデータベースインスタンス。
+/// * `cache` - サジェストデータのキャッシュ。スキャン完了後に更新されます。
 ///
 /// # Returns
 ///
 /// 正常にインポートされたギャラリーの総数を返します。
 #[tauri::command]
-fn scan_and_import(path: String, db: tauri::State<'_, db::Database>) -> Result<usize, String> {
+fn scan_and_import(
+    path: String,
+    db: State<'_, db::Database>,
+    cache: State<'_, SuggestionCache>,
+) -> Result<usize, String> {
     let mut imported_count = 0;
 
-    for entry in WalkDir::new(&path).into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(&path)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
         if entry.file_type().is_file() && entry.file_name() == "info.txt" {
             match import_single_gallery(entry.path(), &db) {
                 Ok(()) => imported_count += 1,
@@ -184,7 +235,15 @@ fn scan_and_import(path: String, db: tauri::State<'_, db::Database>) -> Result<u
         }
     }
 
-    Ok(imported_count) // 成功したインポート件数を返す
+    // インポート成功時のみキャッシュを更新
+    if imported_count > 0
+        && let Ok(new_data) = db.get_aggregated_suggestions()
+    {
+        let mut write_guard = cache.0.write().map_err(|_| "Cache Write Error")?;
+        *write_guard = new_data;
+    }
+
+    Ok(imported_count)
 }
 
 /// クエリ文字列に基づいてデータベースを検索し、一致するアイテムのパスを取得します。
@@ -229,10 +288,9 @@ pub fn run() {
 
             // データベースのファイル名をパスに追加する
             db_path.push("comic_viewer.db");
-            match db::Database::new(&db_path) {
-                Ok(db) => {
-                    app.manage(db);
-                }
+
+            let db = match db::Database::new(&db_path) {
+                Ok(db) => db,
                 Err(e) => {
                     let err_msg = format!("データベースの初期化に失敗しました: {e}");
                     eprintln!("{err_msg}");
@@ -245,14 +303,20 @@ pub fn run() {
                         .show(move |_| {
                             app_handle.exit(1);
                         });
+                    return Ok(());
                 }
             };
+
+            let initial_data = db.get_aggregated_suggestions().unwrap_or_default();
+            app.manage(db);
+            app.manage(SuggestionCache(RwLock::new(initial_data)));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_images_in_dir,
             scan_and_import,
-            search_items
+            search_items,
+            get_suggestions
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

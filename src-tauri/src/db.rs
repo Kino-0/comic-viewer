@@ -3,7 +3,7 @@
 //! `SQLite`を使用してコミックのメタデータ情報を保存および検索するための機能を提供します。
 
 use rusqlite::{Connection, Result, params};
-use std::{fmt::Write, path::Path, sync::Mutex};
+use std::{collections::HashMap, fmt::Write, path::Path, sync::Mutex};
 
 /// コミックのメタ情報を保持する構造体。
 #[derive(Debug, Default)]
@@ -19,6 +19,8 @@ pub struct Info {
     pub language: String,
 }
 
+/// サジェストデータの構造を表す型エイリアス
+pub type SuggestionMap = HashMap<String, Vec<(String, String, usize)>>;
 
 /// `SQLite` データベースの接続を管理する構造体。
 ///
@@ -166,25 +168,25 @@ impl Database {
 
         // 3. items テーブルへの挿入
         let item_id = if let Some(id) = info.gallery_id {
-                tx.execute(
-                    "INSERT OR IGNORE INTO items (id, title, type_id, language_id, path) VALUES (?1, ?2, ?3, ?4, ?5)",
-                    params![id, info.title, type_id, language_id, dir_path],
-                )?;
-                id
+            tx.execute(
+                "INSERT OR IGNORE INTO items (id, title, type_id, language_id, path) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![id, info.title, type_id, language_id, dir_path],
+            )?;
+            id
         } else {
-                // 本家のギャラリーIDとの衝突を避けるため、負の数で採番する。
-                let min_negative_new_id: i64 = tx
-                    .query_row("SELECT MIN(id) FROM items WHERE id < 0", [], |row| {
-                        row.get::<_, Option<i64>>(0)
-                    })?
-                    .unwrap_or(0)
-                    - 1;
+            // 本家のギャラリーIDとの衝突を避けるため、負の数で採番する。
+            let min_negative_new_id: i64 = tx
+                .query_row("SELECT MIN(id) FROM items WHERE id < 0", [], |row| {
+                    row.get::<_, Option<i64>>(0)
+                })?
+                .unwrap_or(0)
+                - 1;
 
-                tx.execute(
-                    "INSERT INTO items (id, title, type_id, language_id, path) VALUES (?1, ?2, ?3, ?4, ?5)",
-                    params![min_negative_new_id, info.title, type_id, language_id, dir_path],
-                )?;
-                min_negative_new_id
+            tx.execute(
+                "INSERT INTO items (id, title, type_id, language_id, path) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![min_negative_new_id, info.title, type_id, language_id, dir_path],
+            )?;
+            min_negative_new_id
         };
 
         Self::insert_relations(
@@ -225,6 +227,77 @@ impl Database {
         Ok(item_id)
     }
 
+    /// 全マスタデータの件数を一括取得し、サジェスト用のデータを構築します。
+    ///
+    /// タグ、作者、グループ、シリーズ、キャラクター、種類、言語の各カテゴリについて、
+    /// 名前、小文字化された名前、およびその属性を持つアイテムの件数を集計します。
+    /// 結果はカテゴリごとに分類され、件数の降順（同じ件数の場合は名前の昇順）でソートされます。
+    ///
+    /// # Returns
+    ///
+    /// カテゴリ名をキーとし、`(表示名, 検索用小文字名, 使用件数)` のタプルのリストを値とする `HashMap` を返します。
+    ///
+    /// # Errors
+    ///
+    /// SQLクエリの準備や実行に失敗した場合にエラーを返します。
+    pub fn get_aggregated_suggestions(&self) -> rusqlite::Result<SuggestionMap> {
+        let conn = self.conn.lock().expect("DB Lock Error");
+        let mut result_map = HashMap::new();
+
+        // プレフィックスと集計SQLの定義
+        let queries = vec![
+            (
+                "tag",
+                "SELECT m.name, COUNT(r.item_id) as c FROM tags m JOIN item_tags r ON m.id = r.tag_id GROUP BY m.id",
+            ),
+            (
+                "artist",
+                "SELECT m.name, COUNT(r.item_id) as c FROM artists m JOIN item_artists r ON m.id = r.artist_id GROUP BY m.id",
+            ),
+            (
+                "group",
+                "SELECT m.name, COUNT(r.item_id) as c FROM groups m JOIN item_groups r ON m.id = r.group_id GROUP BY m.id",
+            ),
+            (
+                "series",
+                "SELECT m.name, COUNT(r.item_id) as c FROM series m JOIN item_series r ON m.id = r.series_id GROUP BY m.id",
+            ),
+            (
+                "character",
+                "SELECT m.name, COUNT(r.item_id) as c FROM characters m JOIN item_characters r ON m.id = r.character_id GROUP BY m.id",
+            ),
+            (
+                "type",
+                "SELECT m.name, COUNT(i.id) as c FROM types m JOIN items i ON m.id = i.type_id GROUP BY m.id",
+            ),
+            (
+                "language",
+                "SELECT m.name, COUNT(i.id) as c FROM languages m JOIN items i ON m.id = i.language_id GROUP BY m.id",
+            ),
+        ];
+
+        for (prefix, sql) in queries {
+            let mut stmt = conn.prepare(sql)?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    usize::try_from(row.get::<_, i64>(1)?).unwrap_or(0),
+                ))
+            })?;
+            let mut list: Vec<(String, String, usize)> = rows
+                .flatten()
+                .map(|(name, count)| {
+                    let lower_name = name.to_lowercase();
+                    (name, lower_name, count)
+                })
+                .collect();
+            list.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+            result_map.insert(prefix.to_string(), list);
+        }
+
+        Ok(result_map)
+    }
+
     /// 検索クエリに基づいてアイテムのパス一覧を取得します。
     ///
     /// プレフィックス（例: `tag:`, `artist:`）を用いた条件指定や、
@@ -245,7 +318,25 @@ impl Database {
         let mut base_query = String::from("SELECT DISTINCT i.path FROM items i WHERE 1=1");
         let mut params: Vec<String> = Vec::new();
 
-        let terms = query_str.split_whitespace();
+        let mut terms = Vec::new();
+        let mut current_term = String::new();
+        let mut in_quotes = false;
+
+        // クォーテーションを考慮してクエリを分割
+        for c in query_str.chars() {
+            match c {
+                '"' => in_quotes = !in_quotes,
+                _ if c.is_whitespace() && !in_quotes => {
+                    if !current_term.is_empty() {
+                        terms.push(std::mem::take(&mut current_term));
+                    }
+                }
+                _ => current_term.push(c),
+            }
+        }
+        if !current_term.is_empty() {
+            terms.push(current_term);
+        }
 
         // ワイルドカード文字をエスケープするクロージャ
         let escape_like = |s: &str| -> String {
@@ -312,7 +403,10 @@ impl Database {
 
                 // 中間テーブルを経由する検索条件の構築
                 let exists_clause = if is_exclude { "NOT EXISTS" } else { "EXISTS" };
-                let _ = write!(base_query, " AND {exists_clause} (SELECT 1 FROM {table_rel} rel JOIN {table_master} m ON rel.{fk_col} = m.id WHERE rel.item_id = i.id AND m.name = ?)");
+                let _ = write!(
+                    base_query,
+                    " AND {exists_clause} (SELECT 1 FROM {table_rel} rel JOIN {table_master} m ON rel.{fk_col} = m.id WHERE rel.item_id = i.id AND m.name = ?)"
+                );
                 params.push(value.to_string());
             } else {
                 // プレフィックスなしの場合はタイトル検索

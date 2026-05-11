@@ -5,6 +5,9 @@ export const TauriAPI = {
   async scanAndImport(path: string): Promise<number> {
     return invoke<number>("scan_and_import", { path });
   },
+  async getSuggestions(prefix: string, keyword: string): Promise<string[]> {
+    return invoke<string[]>("get_suggestions", { prefix, keyword });
+  },
   async searchItems(query: string): Promise<string[]> {
     return invoke<string[]>("search_items", { query });
   },
