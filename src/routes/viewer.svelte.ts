@@ -22,6 +22,23 @@ class ViewerStore {
     return this.imagePaths.length > 0;
   }
 
+  get preloadImages() {
+
+    const PRELOAD_PREV = 1;
+    const PRELOAD_NEXT = 2;
+    const paths = new Set<string>();
+
+    for (let i = -PRELOAD_PREV; i <= PRELOAD_NEXT; i++) {
+      if (i === 0) continue;
+      const idx = this.currentIndex + i;
+      if (idx >= 0 && idx < this.imagePaths.length) {
+        paths.add(this.imagePaths[idx]);
+      }
+    }
+
+    return Array.from(paths).map((p) => convertFileSrc(p));
+  }
+
   async initListeners() {
     if (this.unlistenFns.length > 0) return;
 
