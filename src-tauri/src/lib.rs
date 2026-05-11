@@ -237,12 +237,13 @@ pub fn run() {
                     let err_msg = format!("データベースの初期化に失敗しました: {e}");
                     eprintln!("{err_msg}");
                     // エラーメッセージダイアログを表示する
+                    let app_handle = app.handle().clone();
                     app.dialog()
                         .message(&err_msg)
                         .title("初期化エラー")
                         .kind(MessageDialogKind::Error)
-                        .show(|_| {
-                            std::process::exit(1);
+                        .show(move |_| {
+                            app_handle.exit(1);
                         });
                 }
             };
