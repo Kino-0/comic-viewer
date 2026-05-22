@@ -24,12 +24,6 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<svelte:head>
-    {#each viewer.preloadImages as src (src)}
-        <link rel="preload" as="image" href={src} />
-    {/each}
-</svelte:head>
-
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
     class="viewer"

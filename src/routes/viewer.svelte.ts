@@ -7,10 +7,15 @@ const collator = new Intl.Collator(undefined, {
   sensitivity: "base",
 });
 
+const PRELOAD_PREV = 1;
+const PRELOAD_NEXT = 2;
+
 class ViewerStore {
   imagePaths = $state<string[]>([]);
   currentIndex = $state(0);
   private unlistenFns: UnlistenFn[] = [];
+  private imageCache = new Map<number, HTMLImageElement>();
+  private pendingIndices = new Set<number>();
 
   get currentImage() {
     return this.imagePaths.length > 0
@@ -22,23 +27,6 @@ class ViewerStore {
     return this.imagePaths.length > 0;
   }
 
-  get preloadImages() {
-
-    const PRELOAD_PREV = 1;
-    const PRELOAD_NEXT = 2;
-    const paths = new Set<string>();
-
-    for (let i = -PRELOAD_PREV; i <= PRELOAD_NEXT; i++) {
-      if (i === 0) continue;
-      const idx = this.currentIndex + i;
-      if (idx >= 0 && idx < this.imagePaths.length) {
-        paths.add(this.imagePaths[idx]);
-      }
-    }
-
-    return Array.from(paths).map((p) => convertFileSrc(p));
-  }
-
   async initListeners() {
     if (this.unlistenFns.length > 0) return;
 
@@ -47,12 +35,15 @@ class ViewerStore {
         listen<{ imagePaths: string[]; currentIndex: number }>(
           "sync-state",
           (e) => {
+            this.clearCache();
             this.imagePaths = e.payload.imagePaths;
             this.currentIndex = e.payload.currentIndex;
+            this.updateCache();
           },
         ),
         listen<{ currentIndex: number }>("sync-index", (e) => {
           this.currentIndex = e.payload.currentIndex;
+          this.updateCache();
         }),
         listen("request-sync", () => {
           if (this.imagePaths.length > 0) this.syncState();
@@ -84,8 +75,10 @@ class ViewerStore {
     try {
       const files = await TauriAPI.getImagesInDir(dirPath);
       if (files.length > 0) {
+        this.clearCache();
         this.imagePaths = files.sort(collator.compare);
         this.currentIndex = 0;
+        this.updateCache();
         this.syncState();
       } else {
         console.warn("このディレクトリには画像がありません");
@@ -102,6 +95,7 @@ class ViewerStore {
     );
     if (newIndex !== this.currentIndex) {
       this.currentIndex = newIndex;
+      this.updateCache();
       this.syncIndex();
     }
   }
@@ -115,9 +109,72 @@ class ViewerStore {
   }
 
   close() {
+    this.clearCache();
     this.imagePaths = [];
     this.currentIndex = 0;
     this.syncState();
+  }
+
+  private updateCache() {
+    const keepIndices = this.keepIndices();
+    this.evict(keepIndices);
+    for (const idx of keepIndices) {
+      this.preloadIndex(idx);
+    }
+  }
+
+  private keepIndices(): Set<number> {
+    const keep = new Set<number>();
+    for (let i = -PRELOAD_PREV; i <= PRELOAD_NEXT; i++) {
+      const idx = this.currentIndex + i;
+      if (idx >= 0 && idx < this.imagePaths.length) {
+        keep.add(idx);
+      }
+    }
+    return keep;
+  }
+
+  private evict(keepIndices: Set<number>) {
+    for (const [idx, img] of this.imageCache) {
+      if (!keepIndices.has(idx)) {
+        img.src = "";
+        this.imageCache.delete(idx);
+      }
+    }
+    // pending中でも不要になったものをキャンセル
+    for (const idx of this.pendingIndices) {
+      if (!keepIndices.has(idx)) {
+        this.pendingIndices.delete(idx);
+      }
+    }
+  }
+
+  private async preloadIndex(index: number) {
+    if (this.imageCache.has(index) || this.pendingIndices.has(index)) return;
+    this.pendingIndices.add(index);
+    const img = new Image();
+    img.src = convertFileSrc(this.imagePaths[index]);
+    try {
+      await img.decode();
+      // evict によってキャンセルされていなければキャッシュに追加
+      if (this.pendingIndices.has(index)) {
+        this.imageCache.set(index, img);
+      } else {
+        img.src = "";
+      }
+    } catch {
+      img.src = "";
+    } finally {
+      this.pendingIndices.delete(index);
+    }
+  }
+
+  private clearCache() {
+    for (const img of this.imageCache.values()) {
+      img.src = "";
+    }
+    this.imageCache.clear();
+    this.pendingIndices.clear();
   }
 }
 
