@@ -5,13 +5,37 @@ use db::Info;
 use std::{
     collections::HashMap,
     fs::{self, OpenOptions},
-    io::Write,
-    path::Path,
+    io::{self, Write},
+    path::{Path, PathBuf},
     sync::RwLock,
 };
 use tauri::{Manager, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use walkdir::WalkDir;
+
+/// サポートしている画像拡張子（大文字・小文字は区別しない）。
+const SUPPORTED_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "gif"];
+
+/// 指定したパスがサポート対象の画像拡張子を持つか判定します。
+fn is_supported_image(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            SUPPORTED_EXTENSIONS
+                .iter()
+                .any(|&s| s.eq_ignore_ascii_case(ext))
+        })
+}
+
+/// 指定ディレクトリ直下のサポート対象画像ファイルのパスリストを返します。
+fn collect_image_paths(dir: &Path) -> io::Result<Vec<PathBuf>> {
+    Ok(fs::read_dir(dir)?
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_ok_and(|ft| ft.is_file()))
+        .map(|e| e.path())
+        .filter(|p| is_supported_image(p))
+        .collect())
+}
 
 /// 指定されたディレクトリ直下にある画像ファイルパスのリストを取得します。
 ///
@@ -36,30 +60,11 @@ use walkdir::WalkDir;
 /// * ディレクトリに対する読み取り権限がない
 #[tauri::command]
 fn get_images_in_dir(path: std::path::PathBuf) -> Result<Vec<String>, String> {
-    const SUPPORTED_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "gif"];
-
-    let entries = std::fs::read_dir(&path)
-        .map_err(|e| format!("ディレクトリの読み込みに失敗しました: {e}"))?;
-
-    let image_paths: Vec<String> = entries
-        .filter_map(Result::ok) // エラーになったエントリはスキップ
-        .filter(|entry| entry.file_type().is_ok_and(|ft| ft.is_file())) // シンボリックリンク等を除外
-        .filter_map(|entry| {
-            let path = entry.path();
-            let extension = path.extension()?.to_str()?; // 拡張子がない、またはUTF-8でない場合はスキップ
-
-            if SUPPORTED_EXTENSIONS
-                .iter()
-                .any(|&s| s.eq_ignore_ascii_case(extension))
-            // 大文字・小文字を区別しない
-            {
-                Some(path.to_str()?.to_owned()) // パスがUTF-8でない場合はスキップ
-            } else {
-                None
-            }
-        })
+    let image_paths = collect_image_paths(&path)
+        .map_err(|e| format!("ディレクトリの読み込みに失敗しました: {e}"))?
+        .into_iter()
+        .filter_map(|p| p.to_str().map(str::to_owned))
         .collect();
-
     Ok(image_paths)
 }
 
