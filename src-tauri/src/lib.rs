@@ -144,14 +144,19 @@ fn import_single_gallery(path: &Path, db: &db::Database) -> Result<(), String> {
 
     let info = parse_info_txt(&content);
 
-    let dir_path = path
-        .parent()
+    let parent = path.parent();
+    let dir_path = parent
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
 
+    // ギャラリーディレクトリの画像枚数をインポート時に確定させる
+    let page_count = parent
+        .map(|dir| collect_image_paths(dir).map(|v| v.len()).unwrap_or(0))
+        .unwrap_or(0);
+
     // DBへの挿入
     let item_id = db
-        .insert_info(&info, &dir_path)
+        .insert_info(&info, &dir_path, page_count)
         .map_err(|e| format!("DB挿入エラー: {e}"))?;
 
     // ギャラリーIDが新規採番された場合、info.txtに追記

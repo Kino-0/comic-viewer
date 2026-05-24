@@ -45,6 +45,11 @@ impl Database {
         let conn = Connection::open(path)?;
         conn.execute("PRAGMA foreign_keys = ON;", [])?;
         conn.execute_batch(include_str!("./schema.sql"))?;
+        // 既存DBへのマイグレーション: page_count 列が無ければ追加（列が既存の場合はエラーを無視）
+        let _ = conn.execute(
+            "ALTER TABLE items ADD COLUMN page_count INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -136,6 +141,7 @@ impl Database {
     ///
     /// * `info` - 挿入するギャラリーのメタデータ情報。
     /// * `dir_path` - ギャラリーの画像が保存されているディレクトリパス。
+    /// * `page_count` - ギャラリーディレクトリ内の画像枚数。
     ///
     /// # Returns
     ///
@@ -144,7 +150,7 @@ impl Database {
     /// # Errors
     ///
     /// トランザクションの実行やコミットに失敗した場合にエラーを返します。
-    pub fn insert_info(&self, info: &Info, dir_path: &str) -> Result<i64> {
+    pub fn insert_info(&self, info: &Info, dir_path: &str, page_count: usize) -> Result<i64> {
         let mut conn = self.conn.lock().expect("Database lock poisoned");
         let tx = conn.transaction()?;
 
@@ -169,8 +175,8 @@ impl Database {
         // 3. items テーブルへの挿入
         let item_id = if let Some(id) = info.gallery_id {
             tx.execute(
-                "INSERT OR IGNORE INTO items (id, title, type_id, language_id, path) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![id, info.title, type_id, language_id, dir_path],
+                "INSERT OR IGNORE INTO items (id, title, type_id, language_id, path, page_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![id, info.title, type_id, language_id, dir_path, page_count as i64],
             )?;
             id
         } else {
@@ -183,8 +189,8 @@ impl Database {
                 - 1;
 
             tx.execute(
-                "INSERT INTO items (id, title, type_id, language_id, path) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![min_negative_new_id, info.title, type_id, language_id, dir_path],
+                "INSERT INTO items (id, title, type_id, language_id, path, page_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![min_negative_new_id, info.title, type_id, language_id, dir_path, page_count as i64],
             )?;
             min_negative_new_id
         };
