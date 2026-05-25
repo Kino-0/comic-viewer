@@ -19,6 +19,25 @@ pub struct Info {
     pub language: String,
 }
 
+/// 検索結果として返す、アイテム1件分のメタ情報。
+///
+/// サムネイルは含めず、フロントから遅延取得する（[`crate::get_item_media`]）。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemSummary {
+    pub id: i64,
+    pub title: String,
+    pub path: Option<String>,
+    pub page_count: i64,
+    pub type_name: String,
+    pub language: Option<String>,
+    pub artists: Vec<String>,
+    pub groups: Vec<String>,
+    pub series: Vec<String>,
+    pub characters: Vec<String>,
+    pub tags: Vec<String>,
+}
+
 /// サジェストデータの構造を表す型エイリアス
 pub type SuggestionMap = HashMap<String, Vec<(String, String, usize)>>;
 
@@ -331,12 +350,15 @@ impl Database {
         Ok(result_map)
     }
 
-    /// 検索クエリに基づいてアイテムのパス一覧を取得します。
+    /// 検索クエリに基づいてアイテムのメタ情報一覧を取得します。
     ///
     /// プレフィックス（例: `tag:`, `artist:`）を用いた条件指定や、
     /// ハイフンマイナス(`-`)による除外検索、
     /// タイトルの部分一致検索に対応しています。
     /// ワイルドカード（`%` や `_`）はエスケープされ、リテラルとして検索されます。
+    ///
+    /// 各属性（作者・タグ等）は相関サブクエリと `group_concat` で取得し、
+    /// 区切り文字には Unit Separator (`char(31)`) を使う（タグ名にカンマが含まれうるため）。
     ///
     /// # Arguments
     ///
@@ -345,10 +367,22 @@ impl Database {
     /// # Errors
     ///
     /// クエリのパースやSQLの実行に失敗した場合にエラーを返します。
-    pub fn search_items(&self, query_str: &str) -> rusqlite::Result<Vec<String>> {
+    pub fn search_items(&self, query_str: &str) -> rusqlite::Result<Vec<ItemSummary>> {
         let conn = self.conn.lock().expect("Database lock poisoned");
 
-        let mut base_query = String::from("SELECT DISTINCT i.path FROM items i WHERE 1=1");
+        let mut base_query = String::from(
+            "SELECT \
+               i.id, i.title, i.path, \
+               (SELECT name FROM types     WHERE id = i.type_id)     AS type_name, \
+               (SELECT name FROM languages WHERE id = i.language_id) AS language, \
+               (SELECT group_concat(a.name, char(31)) FROM item_artists    r JOIN artists    a ON a.id = r.artist_id    WHERE r.item_id = i.id) AS artists, \
+               (SELECT group_concat(g.name, char(31)) FROM item_groups     r JOIN groups     g ON g.id = r.group_id     WHERE r.item_id = i.id) AS groups, \
+               (SELECT group_concat(s.name, char(31)) FROM item_series     r JOIN series     s ON s.id = r.series_id     WHERE r.item_id = i.id) AS series, \
+               (SELECT group_concat(c.name, char(31)) FROM item_characters r JOIN characters c ON c.id = r.character_id WHERE r.item_id = i.id) AS characters, \
+               (SELECT group_concat(t.name, char(31)) FROM item_tags       r JOIN tags       t ON t.id = r.tag_id       WHERE r.item_id = i.id) AS tags, \
+               i.page_count \
+             FROM items i WHERE 1=1",
+        );
         let mut params: Vec<String> = Vec::new();
 
         let terms = tokenize_query(query_str);
@@ -433,14 +467,36 @@ impl Database {
 
         base_query.push_str(" ORDER BY i.id DESC");
 
+        // group_concat の結果（char(31) 区切り、NULLは空）を Vec<String> へ分割する
+        let parse_concat_col = |s: Option<String>| -> Vec<String> {
+            match s {
+                Some(s) if !s.is_empty() => s.split('\u{1f}').map(str::to_string).collect(),
+                _ => Vec::new(),
+            }
+        };
+
         let mut stmt = conn.prepare(&base_query)?;
 
         // params_from_iterを使って動的パラメータをバインド
-        let paths = stmt
-            .query_map(rusqlite::params_from_iter(params), |row| row.get(0))?
+        let items = stmt
+            .query_map(rusqlite::params_from_iter(params), |row| {
+                Ok(ItemSummary {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    path: row.get(2)?,
+                    type_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                    language: row.get(4)?,
+                    artists: parse_concat_col(row.get(5)?),
+                    groups: parse_concat_col(row.get(6)?),
+                    series: parse_concat_col(row.get(7)?),
+                    characters: parse_concat_col(row.get(8)?),
+                    tags: parse_concat_col(row.get(9)?),
+                    page_count: row.get::<_, Option<i64>>(10)?.unwrap_or(0),
+                })
+            })?
             .filter_map(Result::ok)
-            .collect::<Vec<String>>();
+            .collect::<Vec<ItemSummary>>();
 
-        Ok(paths)
+        Ok(items)
     }
 }

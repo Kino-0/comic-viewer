@@ -2,7 +2,7 @@
 
 mod db;
 use base64::Engine;
-use db::Info;
+use db::{Info, ItemSummary};
 use lru::LruCache;
 use std::{
     collections::HashMap,
@@ -265,7 +265,9 @@ fn scan_and_import(
     Ok(imported_count)
 }
 
-/// クエリ文字列に基づいてデータベースを検索し、一致するアイテムのパスを取得します。
+/// クエリ文字列に基づいてデータベースを検索し、一致するアイテムのメタ情報を取得します。
+///
+/// サムネイルは含めず、フロント側で [`get_item_media`] を用いて遅延取得します。
 ///
 /// # Arguments
 ///
@@ -274,9 +276,12 @@ fn scan_and_import(
 ///
 /// # Returns
 ///
-/// 検索にヒットしたパスのリストを返し、データベースエラーが発生した場合はエラー文字列を返します。
+/// 検索にヒットしたアイテムのメタ情報のリストを返し、データベースエラーが発生した場合はエラー文字列を返します。
 #[tauri::command]
-fn search_items(query: String, db: tauri::State<'_, db::Database>) -> Result<Vec<String>, String> {
+fn search_items(
+    query: String,
+    db: tauri::State<'_, db::Database>,
+) -> Result<Vec<ItemSummary>, String> {
     db.search_items(&query).map_err(|e| e.to_string())
 }
 
