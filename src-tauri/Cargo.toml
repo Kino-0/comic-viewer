@@ -22,3 +22,8 @@ tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2.7.0"
 rusqlite = { version = "0.39.0", features = ["bundled", "cache"] }
 walkdir = "2.5.0"
+serde = { version = "1", features = ["derive"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+lru = "0.18"
+natord = "1.0"
+base64 = "0.22"
