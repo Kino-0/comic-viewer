@@ -22,6 +22,33 @@ pub struct Info {
 /// サジェストデータの構造を表す型エイリアス
 pub type SuggestionMap = HashMap<String, Vec<(String, String, usize)>>;
 
+/// クォートを考慮して検索クエリ文字列をトークンに分割します。
+///
+/// `"` で囲まれた範囲内の空白は区切りとして扱わず、クォート文字自体はトークンから除去します。
+/// 空のトークンは生成しません。
+fn tokenize_query(query_str: &str) -> Vec<String> {
+    let mut terms = Vec::new();
+    let mut current_term = String::new();
+    let mut in_quotes = false;
+
+    for c in query_str.chars() {
+        match c {
+            '"' => in_quotes = !in_quotes,
+            _ if c.is_whitespace() && !in_quotes => {
+                if !current_term.is_empty() {
+                    terms.push(std::mem::take(&mut current_term));
+                }
+            }
+            _ => current_term.push(c),
+        }
+    }
+    if !current_term.is_empty() {
+        terms.push(current_term);
+    }
+
+    terms
+}
+
 /// `SQLite` データベースの接続を管理する構造体。
 ///
 /// スレッドセーフにアクセスできるように、`Mutex`で接続をラップしています。
@@ -324,25 +351,7 @@ impl Database {
         let mut base_query = String::from("SELECT DISTINCT i.path FROM items i WHERE 1=1");
         let mut params: Vec<String> = Vec::new();
 
-        let mut terms = Vec::new();
-        let mut current_term = String::new();
-        let mut in_quotes = false;
-
-        // クォーテーションを考慮してクエリを分割
-        for c in query_str.chars() {
-            match c {
-                '"' => in_quotes = !in_quotes,
-                _ if c.is_whitespace() && !in_quotes => {
-                    if !current_term.is_empty() {
-                        terms.push(std::mem::take(&mut current_term));
-                    }
-                }
-                _ => current_term.push(c),
-            }
-        }
-        if !current_term.is_empty() {
-            terms.push(current_term);
-        }
+        let terms = tokenize_query(query_str);
 
         // ワイルドカード文字をエスケープするクロージャ
         let escape_like = |s: &str| -> String {
