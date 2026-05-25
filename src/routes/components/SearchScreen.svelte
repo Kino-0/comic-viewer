@@ -1,16 +1,12 @@
 <script lang="ts">
-    import { onDestroy, setContext } from "svelte";
+    import { onDestroy } from "svelte";
     import { TauriAPI } from "../api";
     import { library } from "../library.svelte";
-    import ResultItem from "./ResultItem.svelte";
     import ResultListVirtual from "./ResultListVirtual.svelte";
+    import ResultGridVirtual from "./ResultGridVirtual.svelte";
 
     let inputRef: HTMLInputElement;
     let debounceTimer: ReturnType<typeof setTimeout>;
-
-    // 結果のスクロールコンテナ。ResultItem の IntersectionObserver の root として共有する。
-    let scrollEl: HTMLElement | undefined = $state();
-    setContext("resultScrollRoot", () => scrollEl);
 
     // コンポーネント破棄時にタイマーをクリアし、メモリリークや予期せぬ状態更新を防止
     onDestroy(() => {
@@ -197,13 +193,7 @@
         </div>
 
         {#if library.viewMode === "grid"}
-            <div class="results-scroll" bind:this={scrollEl}>
-                <div class="grid-items">
-                    {#each library.searchResults as item (item.id)}
-                        <ResultItem {item} mode="grid" />
-                    {/each}
-                </div>
-            </div>
+            <ResultGridVirtual items={library.searchResults} />
         {:else}
             <!-- リストは行が重い（全属性チップ）ため仮想化して可視行のみ描画する -->
             <ResultListVirtual items={library.searchResults} />
@@ -337,17 +327,4 @@
         color: white;
     }
 
-    .results-scroll {
-        margin-top: 0.75rem;
-        flex: 1;
-        min-height: 0;
-        overflow-y: auto;
-        padding-right: 0.25rem;
-    }
-    .grid-items {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-        gap: 0.75rem;
-        align-content: start;
-    }
 </style>

@@ -305,7 +305,7 @@ fn resize_to_long_edge(img: &image::DynamicImage, max_px: u32) -> image::Dynamic
     if img.width().max(img.height()) <= max_px {
         return img.clone();
     }
-    img.resize(max_px, max_px, image::imageops::FilterType::Lanczos3)
+    img.resize(max_px, max_px, image::imageops::FilterType::Triangle)
 }
 
 /// 画像ファイルをデコード・縮小し、JPEGエンコードした base64 データURLを生成します。
