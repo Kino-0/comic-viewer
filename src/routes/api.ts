@@ -1,6 +1,25 @@
 import { invoke } from "@tauri-apps/api/core";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
+export interface ItemSummary {
+  id: number;
+  title: string;
+  path: string | null;
+  pageCount: number;
+  typeName: string;
+  language: string | null;
+  artists: string[];
+  groups: string[];
+  series: string[];
+  characters: string[];
+  tags: string[];
+}
+
+export interface ItemMedia {
+  pageCount: number;
+  thumbnail: string | null; // "data:image/jpeg;base64,..." 形式のデータURL
+}
+
 export const TauriAPI = {
   async scanAndImport(path: string): Promise<number> {
     return invoke<number>("scan_and_import", { path });
@@ -8,8 +27,11 @@ export const TauriAPI = {
   async getSuggestions(prefix: string, keyword: string): Promise<string[]> {
     return invoke<string[]>("get_suggestions", { prefix, keyword });
   },
-  async searchItems(query: string): Promise<string[]> {
-    return invoke<string[]>("search_items", { query });
+  async searchItems(query: string): Promise<ItemSummary[]> {
+    return invoke<ItemSummary[]>("search_items", { query });
+  },
+  async getItemMedia(path: string | null): Promise<ItemMedia> {
+    return invoke<ItemMedia>("get_item_media", { path });
   },
   async getImagesInDir(path: string): Promise<string[]> {
     return invoke<string[]>("get_images_in_dir", { path });

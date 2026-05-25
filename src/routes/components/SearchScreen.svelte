@@ -1,11 +1,16 @@
 <script lang="ts">
-    import { onDestroy } from "svelte";
+    import { onDestroy, setContext } from "svelte";
     import { TauriAPI } from "../api";
     import { library } from "../library.svelte";
-    import { viewer } from "../viewer.svelte";
+    import ResultItem from "./ResultItem.svelte";
+    import ResultListVirtual from "./ResultListVirtual.svelte";
 
     let inputRef: HTMLInputElement;
     let debounceTimer: ReturnType<typeof setTimeout>;
+
+    // 結果のスクロールコンテナ。ResultItem の IntersectionObserver の root として共有する。
+    let scrollEl: HTMLElement | undefined = $state();
+    setContext("resultScrollRoot", () => scrollEl);
 
     // コンポーネント破棄時にタイマーをクリアし、メモリリークや予期せぬ状態更新を防止
     onDestroy(() => {
@@ -156,23 +161,67 @@
         </button>
     </form>
 
-    <ul class="results">
-        {#each library.searchResults as path (path)}
-            <li>
-                <button type="button" onclick={() => viewer.load(path)}>
-                    {path}
+    {#if library.searchResults.length > 0}
+        <div class="results-header">
+            <span class="result-count">{library.searchResults.length} 件</span>
+            <div class="view-toggle">
+                <button
+                    type="button"
+                    class:active={library.viewMode === "list"}
+                    title="リスト表示"
+                    aria-label="リスト表示"
+                    onclick={() => (library.viewMode = "list")}
+                >
+                    <svg viewBox="0 0 24 24" width="20" height="20">
+                        <path
+                            fill="currentColor"
+                            d="M3 5h2v2H3V5zm4 0h14v2H7V5zM3 11h2v2H3v-2zm4 0h14v2H7v-2zM3 17h2v2H3v-2zm4 0h14v2H7v-2z"
+                        />
+                    </svg>
                 </button>
-            </li>
-        {/each}
-    </ul>
+                <button
+                    type="button"
+                    class:active={library.viewMode === "grid"}
+                    title="グリッド表示"
+                    aria-label="グリッド表示"
+                    onclick={() => (library.viewMode = "grid")}
+                >
+                    <svg viewBox="0 0 24 24" width="20" height="20">
+                        <path
+                            fill="currentColor"
+                            d="M3 3h8v8H3V3zm10 0h8v8h-8V3zM3 13h8v8H3v-8zm10 0h8v8h-8v-8z"
+                        />
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        {#if library.viewMode === "grid"}
+            <div class="results-scroll" bind:this={scrollEl}>
+                <div class="grid-items">
+                    {#each library.searchResults as item (item.id)}
+                        <ResultItem {item} mode="grid" />
+                    {/each}
+                </div>
+            </div>
+        {:else}
+            <!-- リストは行が重い（全属性チップ）ため仮想化して可視行のみ描画する -->
+            <ResultListVirtual items={library.searchResults} />
+        {/if}
+    {/if}
 </div>
 
 <style>
     .search-screen {
         padding: 2rem;
-        max-width: 800px;
+        max-width: 1100px;
         margin: 0 auto;
         color: white;
+        height: 100%;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
     }
     .search-box {
         display: flex;
@@ -249,27 +298,56 @@
         cursor: not-allowed;
     }
 
-    .results {
-        list-style: none;
-        padding: 0;
+    .results-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
         margin-top: 1rem;
-        max-height: 70vh;
-        overflow-y: auto;
-    }
-    .results button {
-        width: 100%;
-        text-align: left;
-        padding: 0.5rem;
-        color: white;
-        background: none;
-        border: none;
+        padding-bottom: 0.5rem;
         border-bottom: 1px solid #333;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        cursor: pointer;
     }
-    .results button:hover {
+    .result-count {
+        font-size: 0.95rem;
+        color: #bbb;
+    }
+    .view-toggle {
+        display: flex;
+        gap: 0.25rem;
+    }
+    .view-toggle button {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.4rem;
+        background: #2f2f2f;
+        color: #888;
+        border: 1px solid #444;
+        border-radius: 6px;
+        cursor: pointer;
+        transition:
+            background 0.15s,
+            color 0.15s;
+    }
+    .view-toggle button:hover {
+        color: #ddd;
+    }
+    .view-toggle button.active {
         background: #396cd8;
+        border-color: #396cd8;
+        color: white;
+    }
+
+    .results-scroll {
+        margin-top: 0.75rem;
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        padding-right: 0.25rem;
+    }
+    .grid-items {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 0.75rem;
+        align-content: start;
     }
 </style>
