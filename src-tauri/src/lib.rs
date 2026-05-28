@@ -1,16 +1,13 @@
 //! Tauriアプリケーションのバックエンドロジックとコマンドを提供するモジュール。
 
 mod db;
-use base64::Engine;
 use db::{Info, ItemSummary};
-use lru::LruCache;
 use std::{
     collections::HashMap,
     fs::{self, OpenOptions},
     io::{self, Write},
-    num::NonZeroUsize,
     path::{Path, PathBuf},
-    sync::{Mutex, RwLock},
+    sync::RwLock,
 };
 use tauri::{Manager, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
@@ -18,12 +15,6 @@ use walkdir::WalkDir;
 
 /// サポートしている画像拡張子（大文字・小文字は区別しない）。
 const SUPPORTED_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "gif"];
-
-/// アイテムメディアキャッシュの最大保持件数（数百件規模では実質全件保持される）。
-const ITEM_MEDIA_CACHE_CAPACITY: usize = 1024;
-
-/// サムネイルの長辺の最大ピクセル数。
-const THUMBNAIL_LONG_EDGE: u32 = 400;
 
 /// 指定したパスがサポート対象の画像拡張子を持つか判定します。
 fn is_supported_image(path: &Path) -> bool {
@@ -277,113 +268,30 @@ fn scan_and_import(
 /// # Returns
 ///
 /// 検索にヒットしたアイテムのメタ情報のリストを返し、データベースエラーが発生した場合はエラー文字列を返します。
+/// ギャラリーディレクトリの先頭画像パスを自然順ソートで返します。
+///
+/// ビューアの `Intl.Collator` numeric ソートと一致するよう `natord` を使用します。
+fn find_cover_path(dir: &Path) -> Option<String> {
+    let mut images = collect_image_paths(dir).ok()?;
+    if images.is_empty() {
+        return None;
+    }
+    images.sort_by(|a, b| natord::compare_ignore_case(&a.to_string_lossy(), &b.to_string_lossy()));
+    images[0].to_str().map(str::to_owned)
+}
+
 #[tauri::command]
 fn search_items(
     query: String,
     db: tauri::State<'_, db::Database>,
 ) -> Result<Vec<ItemSummary>, String> {
-    db.search_items(&query).map_err(|e| e.to_string())
-}
-
-/// アイテムのメディア情報（ページ数とサムネイル）。
-///
-/// サムネイルは `data:image/jpeg;base64,...` 形式のデータURL。生成できない場合は `None`。
-#[derive(Debug, Clone, Default, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ItemMedia {
-    pub page_count: usize,
-    pub thumbnail: Option<String>,
-}
-
-/// 生成済みサムネイル + ページ数を保持するインメモリLRUキャッシュ。
-///
-/// キーはギャラリーのディレクトリパス。ディスク/DBには永続化せず、アプリ再起動でクリアされる。
-pub struct ItemMediaCache(pub Mutex<LruCache<String, ItemMedia>>);
-
-/// `DynamicImage` を長辺 `max_px` 以内に縮小します（アスペクト比維持・拡大はしない）。
-fn resize_to_long_edge(img: &image::DynamicImage, max_px: u32) -> image::DynamicImage {
-    if img.width().max(img.height()) <= max_px {
-        return img.clone();
-    }
-    img.resize(max_px, max_px, image::imageops::FilterType::Triangle)
-}
-
-/// 画像ファイルをデコード・縮小し、JPEGエンコードした base64 データURLを生成します。
-///
-/// デコードやエンコードに失敗した場合は `None` を返します（破損画像などは欠損扱い）。
-fn generate_thumbnail(path: &Path) -> Option<String> {
-    let img = image::open(path).ok()?;
-    let resized = resize_to_long_edge(&img, THUMBNAIL_LONG_EDGE);
-    let rgb = resized.to_rgb8();
-    let mut buf = Vec::new();
-    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 80)
-        .encode_image(&rgb)
-        .ok()?;
-    let base64 = base64::engine::general_purpose::STANDARD.encode(&buf);
-    Some(format!("data:image/jpeg;base64,{base64}"))
-}
-
-/// 1つのギャラリーディレクトリから、ページ数と1枚目のサムネイルを生成します（ブロッキング処理）。
-///
-/// ディレクトリが読めない場合や対応画像が0枚の場合は `{ page_count: 0, thumbnail: None }` を返します。
-/// 1枚目の選定はビューア（JSの `Intl.Collator` numeric）と揃うよう、自然順ソートで先頭を採用します。
-fn generate_item_media(path: &str) -> ItemMedia {
-    let mut images = collect_image_paths(Path::new(path)).unwrap_or_default();
-    let page_count = images.len();
-    if images.is_empty() {
-        return ItemMedia::default();
-    }
-
-    // ビューアと同じ並び順になるよう、ファイルパス文字列を自然順（数値考慮）でソートして先頭を選ぶ
-    images.sort_by(|a, b| natord::compare_ignore_case(&a.to_string_lossy(), &b.to_string_lossy()));
-
-    let thumbnail = generate_thumbnail(&images[0]);
-    ItemMedia {
-        page_count,
-        thumbnail,
-    }
-}
-
-/// 指定ギャラリーのページ数とサムネイル（1枚目）を取得します。可視アイテム毎に遅延取得されます。
-///
-/// キャッシュにヒットすれば即返し（スクロール耐性）、ミス時のみデコード処理を
-/// `spawn_blocking` で実行してUIスレッドをブロックしないようにします。
-///
-/// # Arguments
-///
-/// * `path` - ギャラリーのディレクトリパス（`None` や読み込み不可は欠損扱い）。
-/// * `cache` - 生成済みサムネイルのインメモリLRUキャッシュ。
-///
-/// # Returns
-///
-/// ページ数とサムネイル（データURL or `None`）を返します。
-#[tauri::command]
-async fn get_item_media(
-    path: Option<String>,
-    cache: State<'_, ItemMediaCache>,
-) -> Result<ItemMedia, String> {
-    let Some(path) = path else {
-        return Ok(ItemMedia::default());
-    };
-
-    // キャッシュヒット時は即返す
-    {
-        let mut guard = cache.0.lock().map_err(|_| "Cache lock error")?;
-        if let Some(media) = guard.get(&path) {
-            return Ok(media.clone());
+    let mut items = db.search_items(&query).map_err(|e| e.to_string())?;
+    for item in &mut items {
+        if let Some(dir) = &item.path {
+            item.cover_path = find_cover_path(Path::new(dir));
         }
     }
-
-    // デコードはCPUバウンドなのでブロッキングスレッドで実行する
-    let path_owned = path.clone();
-    let media = tauri::async_runtime::spawn_blocking(move || generate_item_media(&path_owned))
-        .await
-        .map_err(|e| format!("サムネイル生成タスクの実行に失敗しました: {e}"))?;
-
-    let mut guard = cache.0.lock().map_err(|_| "Cache lock error")?;
-    guard.put(path, media.clone());
-
-    Ok(media)
+    Ok(items)
 }
 
 /// Tauriアプリケーションを初期化し、実行します。
@@ -435,9 +343,6 @@ pub fn run() {
             let initial_data = db.get_aggregated_suggestions().unwrap_or_default();
             app.manage(db);
             app.manage(SuggestionCache(RwLock::new(initial_data)));
-            app.manage(ItemMediaCache(Mutex::new(LruCache::new(
-                NonZeroUsize::new(ITEM_MEDIA_CACHE_CAPACITY).expect("capacity must be non-zero"),
-            ))));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -445,7 +350,6 @@ pub fn run() {
             scan_and_import,
             search_items,
             get_suggestions,
-            get_item_media
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -23,18 +23,4 @@ tauri-plugin-dialog = "2.7.0"
 rusqlite = { version = "0.39.0", features = ["bundled", "cache"] }
 walkdir = "2.5.0"
 serde = { version = "1", features = ["derive"] }
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
-lru = "0.18"
 natord = "1.0"
-base64 = "0.22"
-
-# image-webp (純粋Rust実装) と image のリサイズ処理は最適化なしで壊滅的に遅いため、
-# devビルドでも依存クレートのみ opt-level=3 にする。
-[profile.dev.package.image]
-opt-level = 3
-[profile.dev.package.image-webp]
-opt-level = 3
-[profile.dev.package.zune-jpeg]
-opt-level = 3
-[profile.dev.package.zune-core]
-opt-level = 3

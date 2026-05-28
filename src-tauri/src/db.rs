@@ -20,8 +20,6 @@ pub struct Info {
 }
 
 /// 検索結果として返す、アイテム1件分のメタ情報。
-///
-/// サムネイルは含めず、フロントから遅延取得する（[`crate::get_item_media`]）。
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ItemSummary {
@@ -36,6 +34,8 @@ pub struct ItemSummary {
     pub series: Vec<String>,
     pub characters: Vec<String>,
     pub tags: Vec<String>,
+    /// ギャラリーの先頭画像パス（自然順ソート）。`lib.rs` の `search_items` が設定する。
+    pub cover_path: Option<String>,
 }
 
 /// サジェストデータの構造を表す型エイリアス
@@ -492,6 +492,7 @@ impl Database {
                     characters: parse_concat_col(row.get(8)?),
                     tags: parse_concat_col(row.get(9)?),
                     page_count: row.get::<_, Option<i64>>(10)?.unwrap_or(0),
+                    cover_path: None,
                 })
             })?
             .filter_map(Result::ok)
