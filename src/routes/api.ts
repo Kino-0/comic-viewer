@@ -13,11 +13,7 @@ export interface ItemSummary {
   series: string[];
   characters: string[];
   tags: string[];
-}
-
-export interface ItemMedia {
-  pageCount: number;
-  thumbnail: string | null; // "data:image/jpeg;base64,..." 形式のデータURL
+  coverPath: string | null;
 }
 
 export const TauriAPI = {
@@ -29,9 +25,6 @@ export const TauriAPI = {
   },
   async searchItems(query: string): Promise<ItemSummary[]> {
     return invoke<ItemSummary[]>("search_items", { query });
-  },
-  async getItemMedia(path: string | null): Promise<ItemMedia> {
-    return invoke<ItemMedia>("get_item_media", { path });
   },
   async getImagesInDir(path: string): Promise<string[]> {
     return invoke<string[]>("get_images_in_dir", { path });

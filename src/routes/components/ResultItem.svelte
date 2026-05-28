@@ -1,6 +1,5 @@
 <script lang="ts">
-    import { onMount, getContext } from "svelte";
-    import { library } from "../library.svelte";
+    import { convertFileSrc } from "@tauri-apps/api/core";
     import { viewer } from "../viewer.svelte";
     import type { ItemSummary } from "../api";
     import AttributeChip from "./AttributeChip.svelte";
@@ -12,50 +11,9 @@
 
     let { item, mode }: Props = $props();
 
-    // 結果のスクロールコンテナを IntersectionObserver の root にするための getter（SearchScreen が提供）
-    const getScrollRoot =
-        getContext<() => HTMLElement | undefined>("resultScrollRoot");
-
-    let rootEl: HTMLElement | undefined = $state();
-    let visible = $state(false);
-
-    onMount(() => {
-        if (!rootEl) return;
-        const observer = new IntersectionObserver(
-            (entries) => {
-                for (const entry of entries) {
-                    if (entry.isIntersecting) {
-                        visible = true; // 一度可視になれば維持（再スクロールで再取得不要）
-                        observer.disconnect();
-                        break;
-                    }
-                }
-            },
-            { root: getScrollRoot?.() ?? null, rootMargin: "200px" },
-        );
-        observer.observe(rootEl);
-        return () => observer.disconnect();
-    });
-
-    // 可視かつ未取得なら遅延取得。再検索で mediaState がクリアされると再実行される。
-    $effect(() => {
-        if (visible && !library.mediaState.has(item.id)) {
-            library.loadItemMedia(item);
-        }
-    });
-
-    let entry = $derived(library.mediaState.get(item.id));
-    let status = $derived(entry?.status ?? "idle");
-    let thumbnail = $derived(entry?.media?.thumbnail ?? null);
     let pageCount = $derived(item.pageCount > 0 ? item.pageCount : undefined);
 
-    let showThumb = $derived(status === "loaded" && thumbnail !== null);
-    let showFallbackThumb = $derived(
-        status === "error" || (status === "loaded" && thumbnail === null),
-    );
-
     function openViewer() {
-        // 欠損（path=null）はクリックしても何も開かない（既存動作のまま）
         if (item.path) viewer.load(item.path);
     }
 
@@ -68,9 +26,15 @@
 </script>
 
 {#snippet thumb()}
-    {#if showThumb}
-        <img src={thumbnail} alt={item.title} draggable="false" />
-    {:else if showFallbackThumb}
+    {#if item.coverPath}
+        <img
+            src={convertFileSrc(item.coverPath)}
+            alt={item.title}
+            loading="lazy"
+            decoding="async"
+            draggable="false"
+        />
+    {:else}
         <div class="placeholder">
             <svg viewBox="0 0 24 24" width="40" height="40" aria-hidden="true">
                 <path
@@ -79,17 +43,11 @@
                 />
             </svg>
         </div>
-    {:else if status === "loading"}
-        <div class="placeholder skeleton"></div>
-    {:else}
-        <!-- idle（未取得）はアニメーションを走らせず静的表示にし、画面外行のrepaintを抑える -->
-        <div class="placeholder idle"></div>
     {/if}
 {/snippet}
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-    bind:this={rootEl}
     class="card {mode}"
     role="button"
     tabindex="0"
@@ -164,7 +122,7 @@
     .thumb-box img {
         width: 100%;
         height: 100%;
-        object-fit: contain; /* 全体表示・レターボックス */
+        object-fit: contain;
         user-select: none;
     }
     .placeholder {
@@ -174,26 +132,10 @@
         align-items: center;
         justify-content: center;
         color: #555;
-    }
-    .placeholder.idle {
-        background: #222; /* 未取得行は静的（アニメーションなし） */
-    }
-    .skeleton {
-        background: linear-gradient(90deg, #2a2a2a 25%, #383838 50%, #2a2a2a 75%);
-        background-size: 200% 100%;
-        animation: shimmer 1.2s infinite;
-    }
-    @keyframes shimmer {
-        0% {
-            background-position: 200% 0;
-        }
-        100% {
-            background-position: -200% 0;
-        }
+        background: #222;
     }
 
     /* ===== リスト表示 ===== */
-    /* 行間は仮想化側（ResultListVirtual）が offset で確保するため margin は持たない。 */
     .card.list {
         display: flex;
         gap: 1rem;
@@ -225,7 +167,7 @@
     }
     .chips {
         display: flex;
-        flex-wrap: wrap; /* タグが多い場合は全件折り返し */
+        flex-wrap: wrap;
         gap: 0.3rem;
     }
     .footer {
@@ -237,8 +179,6 @@
     }
 
     /* ===== グリッド表示 ===== */
-    /* aspect-ratio はグリッドアイテム自身ではなく内側のサムネ枠に持たせる。
-       （アイテムに直接付けると WebKitGTK で行トラック高が確保されず上下が重なるため） */
     .card.grid {
         position: relative;
         border-radius: 6px;
@@ -272,7 +212,6 @@
         font-weight: 600;
         text-align: center;
         line-height: 1.3;
-        /* 長いタイトルは省略 */
         display: -webkit-box;
         -webkit-line-clamp: 4;
         line-clamp: 4;

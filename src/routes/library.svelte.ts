@@ -1,12 +1,5 @@
 import { open, message } from "@tauri-apps/plugin-dialog";
-import { SvelteMap } from "svelte/reactivity";
-import { TauriAPI, type ItemSummary, type ItemMedia } from "./api";
-
-export type MediaStatus = "idle" | "loading" | "loaded" | "error";
-export interface MediaEntry {
-  status: MediaStatus;
-  media?: ItemMedia;
-}
+import { TauriAPI, type ItemSummary } from "./api";
 
 /** 検索欄への属性チップ追加で許可するプレフィックス。 */
 export type SearchPrefix =
@@ -25,10 +18,6 @@ class LibraryStore {
 
   // 表示モード（永続化しない・ウィンドウ毎に独立。起動毎にリストへリセット）
   viewMode = $state<"list" | "grid">("list");
-
-  // 各アイテム（キー = item.id）のメディア取得状態。
-  // SvelteMap を使い、.set()/.has()/.clear() の変更がリアクティブに伝播するようにする。
-  mediaState = new SvelteMap<number, MediaEntry>();
 
   suggestions = $state<string[]>([]);
   showSuggestions = $state(false);
@@ -57,32 +46,12 @@ class LibraryStore {
   async search() {
     if (!this.query.trim()) {
       this.searchResults = [];
-      this.mediaState.clear();
       return;
     }
     try {
-      // 新しい結果に切り替えるため取得状態をクリア（Rust側キャッシュは残るため再取得は高速）
-      this.mediaState.clear();
       this.searchResults = await TauriAPI.searchItems(this.query);
     } catch (error) {
       console.error("Search failed:", error);
-    }
-  }
-
-  /**
-   * 可視アイテムのメディア（ページ数・サムネイル）を遅延取得する。
-   * 既に取得開始済み（loading/loaded/error）のものは再取得しない（重複呼び出し防止）。
-   */
-  async loadItemMedia(item: ItemSummary) {
-    if (this.mediaState.has(item.id)) return;
-
-    this.mediaState.set(item.id, { status: "loading" });
-    try {
-      const media = await TauriAPI.getItemMedia(item.path);
-      this.mediaState.set(item.id, { status: "loaded", media });
-    } catch (error) {
-      console.error("Media load failed:", error);
-      this.mediaState.set(item.id, { status: "error" });
     }
   }
 
