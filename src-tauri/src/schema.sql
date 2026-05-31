@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS items (
     language_id INTEGER,
     path        TEXT,
     page_count  INTEGER NOT NULL DEFAULT 0,
+    cover_path  TEXT,
     created_at  TEXT DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(type_id) REFERENCES types(id),
     FOREIGN KEY(language_id) REFERENCES languages(id)

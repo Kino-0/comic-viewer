@@ -34,7 +34,7 @@ pub struct ItemSummary {
     pub series: Vec<String>,
     pub characters: Vec<String>,
     pub tags: Vec<String>,
-    /// ギャラリーの先頭画像パス（自然順ソート）。`lib.rs` の `search_items` が設定する。
+    /// ギャラリーの先頭画像パス（自然順ソート）。インポート時に確定し DB に保存される。
     pub cover_path: Option<String>,
 }
 
@@ -96,6 +96,8 @@ impl Database {
             "ALTER TABLE items ADD COLUMN page_count INTEGER NOT NULL DEFAULT 0",
             [],
         );
+        // 既存DBへのマイグレーション: cover_path 列が無ければ追加（列が既存の場合はエラーを無視）
+        let _ = conn.execute("ALTER TABLE items ADD COLUMN cover_path TEXT", []);
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -188,6 +190,7 @@ impl Database {
     /// * `info` - 挿入するギャラリーのメタデータ情報。
     /// * `dir_path` - ギャラリーの画像が保存されているディレクトリパス。
     /// * `page_count` - ギャラリーディレクトリ内の画像枚数。
+    /// * `cover_path` - カバーとして表示する先頭画像のパス（画像が無い場合は `None`）。
     ///
     /// # Returns
     ///
@@ -196,7 +199,13 @@ impl Database {
     /// # Errors
     ///
     /// トランザクションの実行やコミットに失敗した場合にエラーを返します。
-    pub fn insert_info(&self, info: &Info, dir_path: &str, page_count: usize) -> Result<i64> {
+    pub fn insert_info(
+        &self,
+        info: &Info,
+        dir_path: &str,
+        page_count: usize,
+        cover_path: Option<&str>,
+    ) -> Result<i64> {
         let mut conn = self.conn.lock().expect("Database lock poisoned");
         let tx = conn.transaction()?;
 
@@ -220,9 +229,24 @@ impl Database {
 
         // 3. items テーブルへの挿入
         let item_id = if let Some(id) = info.gallery_id {
+            // 既存行があればディレクトリ由来の値（path / page_count / cover_path）を
+            // 再インポートで更新する（upsert）。3項目を揃えて更新し path↔cover_path の不整合を防ぐ。
             tx.execute(
-                "INSERT OR IGNORE INTO items (id, title, type_id, language_id, path, page_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![id, info.title, type_id, language_id, dir_path, page_count as i64],
+                "INSERT INTO items (id, title, type_id, language_id, path, page_count, cover_path) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+                 ON CONFLICT(id) DO UPDATE SET \
+                   path = excluded.path, \
+                   page_count = excluded.page_count, \
+                   cover_path = excluded.cover_path",
+                params![
+                    id,
+                    info.title,
+                    type_id,
+                    language_id,
+                    dir_path,
+                    page_count as i64,
+                    cover_path
+                ],
             )?;
             id
         } else {
@@ -235,8 +259,8 @@ impl Database {
                 - 1;
 
             tx.execute(
-                "INSERT INTO items (id, title, type_id, language_id, path, page_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![min_negative_new_id, info.title, type_id, language_id, dir_path, page_count as i64],
+                "INSERT INTO items (id, title, type_id, language_id, path, page_count, cover_path) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![min_negative_new_id, info.title, type_id, language_id, dir_path, page_count as i64, cover_path],
             )?;
             min_negative_new_id
         };
@@ -380,7 +404,7 @@ impl Database {
                (SELECT group_concat(s.name, char(31)) FROM item_series     r JOIN series     s ON s.id = r.series_id     WHERE r.item_id = i.id) AS series, \
                (SELECT group_concat(c.name, char(31)) FROM item_characters r JOIN characters c ON c.id = r.character_id WHERE r.item_id = i.id) AS characters, \
                (SELECT group_concat(t.name, char(31)) FROM item_tags       r JOIN tags       t ON t.id = r.tag_id       WHERE r.item_id = i.id) AS tags, \
-               i.page_count \
+               i.page_count, i.cover_path \
              FROM items i WHERE 1=1",
         );
         let mut params: Vec<String> = Vec::new();
@@ -492,7 +516,7 @@ impl Database {
                     characters: parse_concat_col(row.get(8)?),
                     tags: parse_concat_col(row.get(9)?),
                     page_count: row.get::<_, Option<i64>>(10)?.unwrap_or(0),
-                    cover_path: None,
+                    cover_path: row.get(11)?,
                 })
             })?
             .filter_map(Result::ok)

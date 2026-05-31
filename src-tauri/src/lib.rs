@@ -149,14 +149,25 @@ fn import_single_gallery(path: &Path, db: &db::Database) -> Result<(), String> {
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
 
-    // ギャラリーディレクトリの画像枚数をインポート時に確定させる
-    let page_count = parent
-        .map(|dir| collect_image_paths(dir).map(|v| v.len()).unwrap_or(0))
-        .unwrap_or(0);
+    // ギャラリーディレクトリの画像枚数とカバー（先頭画像）をインポート時に確定させる。
+    // ビューアの Intl.Collator numeric ソートと一致するよう natord で先頭を選ぶ。
+    let (page_count, cover_path) = parent
+        .map(|dir| {
+            let imgs = collect_image_paths(dir).unwrap_or_default();
+            let count = imgs.len();
+            let cover = imgs
+                .into_iter()
+                .min_by(|a, b| {
+                    natord::compare_ignore_case(&a.to_string_lossy(), &b.to_string_lossy())
+                })
+                .and_then(|p| p.to_str().map(str::to_owned));
+            (count, cover)
+        })
+        .unwrap_or((0, None));
 
     // DBへの挿入
     let item_id = db
-        .insert_info(&info, &dir_path, page_count)
+        .insert_info(&info, &dir_path, page_count, cover_path.as_deref())
         .map_err(|e| format!("DB挿入エラー: {e}"))?;
 
     // ギャラリーIDが新規採番された場合、info.txtに追記
@@ -258,7 +269,8 @@ fn scan_and_import(
 
 /// クエリ文字列に基づいてデータベースを検索し、一致するアイテムのメタ情報を取得します。
 ///
-/// サムネイルは含めず、フロント側で [`get_item_media`] を用いて遅延取得します。
+/// カバー画像パス（`cover_path`）はインポート時に確定済みで DB から直接返されるため、
+/// この関数内でファイルシステムを走査することはありません。
 ///
 /// # Arguments
 ///
@@ -268,30 +280,12 @@ fn scan_and_import(
 /// # Returns
 ///
 /// 検索にヒットしたアイテムのメタ情報のリストを返し、データベースエラーが発生した場合はエラー文字列を返します。
-/// ギャラリーディレクトリの先頭画像パスを自然順ソートで返します。
-///
-/// ビューアの `Intl.Collator` numeric ソートと一致するよう `natord` を使用します。
-fn find_cover_path(dir: &Path) -> Option<String> {
-    let mut images = collect_image_paths(dir).ok()?;
-    if images.is_empty() {
-        return None;
-    }
-    images.sort_by(|a, b| natord::compare_ignore_case(&a.to_string_lossy(), &b.to_string_lossy()));
-    images[0].to_str().map(str::to_owned)
-}
-
 #[tauri::command]
 fn search_items(
     query: String,
     db: tauri::State<'_, db::Database>,
 ) -> Result<Vec<ItemSummary>, String> {
-    let mut items = db.search_items(&query).map_err(|e| e.to_string())?;
-    for item in &mut items {
-        if let Some(dir) = &item.path {
-            item.cover_path = find_cover_path(Path::new(dir));
-        }
-    }
-    Ok(items)
+    db.search_items(&query).map_err(|e| e.to_string())
 }
 
 /// Tauriアプリケーションを初期化し、実行します。
