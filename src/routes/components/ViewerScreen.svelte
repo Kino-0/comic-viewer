@@ -33,6 +33,9 @@
     {#if viewer.currentImage}
         <img src={viewer.currentImage} alt="Comic page" />
     {/if}
+    {#if viewer.currentIndex === viewer.imagePaths.length - 1}
+        <div class="last-page">最後のページ</div>
+    {/if}
     <div class="info">Press Esc to return to search</div>
 </div>
 
@@ -57,6 +60,16 @@
         top: 10px;
         color: oklch(50% 0 0 / 30%);
         font-size: 0.8rem;
+        pointer-events: none;
+    }
+    .last-page {
+        position: absolute;
+        bottom: 16px;
+        padding: 4px 12px;
+        border-radius: 4px;
+        background: oklch(0% 0 0 / 60%);
+        color: oklch(100% 0 0 / 85%);
+        font-size: 0.85rem;
         pointer-events: none;
     }
 </style>
