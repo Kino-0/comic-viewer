@@ -14,9 +14,12 @@
 </script>
 
 <main>
-    {#if !viewer.isViewing}
+    <!-- SearchScreen は破棄せず display:none で隠す。
+         破棄すると結果リストのスクロール位置が失われるため。 -->
+    <div class="screen" class:hidden={viewer.isViewing}>
         <SearchScreen />
-    {:else}
+    </div>
+    {#if viewer.isViewing}
         <ViewerScreen />
     {/if}
 </main>
@@ -30,5 +33,12 @@
         width: 100vw;
         height: 100vh;
         overflow: hidden;
+    }
+    .screen {
+        width: 100%;
+        height: 100%;
+    }
+    .screen.hidden {
+        display: none;
     }
 </style>
